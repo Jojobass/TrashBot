@@ -14,9 +14,12 @@ logging.basicConfig(
 
 
 class Status:
-    (STARTED, WAITING_FOR_NAME, WAITING_FOR_ADDRESS, WAITING_FOR_PHONE,
-     READY_NO_COMMENT, EDIT_NAME, EDIT_ADDRESS, EDIT_PHONE, EDIT_COMMENT,
-     READY) = range(10)
+    (STARTED, WAITING_FOR_NAME, WAITING_FOR_ADDRESS_HOUSE,
+     WAITING_FOR_ADDRESS_ENTRANCE, WAITING_FOR_ADDRESS_FLOOR,
+     WAITING_FOR_ADDRESS_FLAT, WAITING_FOR_PHONE,
+     READY_NO_COMMENT, EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
+     EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
+     READY, WAITING_FOR_PAYMENT) = range(17)
 
 
 def create_connection(db_file):
@@ -65,10 +68,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # pylint: disable=unused-argument
-    user_info = get_user_info(update.message.chat_id)
-    if user_info[4] != Status.READY:
-        insert_user_info(update.message.chat_id,
-                         state=Status.WAITING_FOR_NAME)
+    user_info = get_user_details(update.message.chat_id)
+    user_filled = user_info_filled(update.message.chat_id)[0]
+    if not user_filled:
+        insert_user_info(update.message.chat_id, status=Status.WAITING_FOR_NAME)
         await update.message.reply_html(
             '<b>Введите Имя:</b>'
         )
@@ -78,11 +81,11 @@ async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b><i>Имя:</i></b>\n'
             f'{user_info[0]}\n'
             '<b><i>Адрес:</i></b>\n'
-            f'{user_info[1]}\n'
+            f'{user_info[1]}, {user_info[2]}, {user_info[3]}, {user_info[4]}\n'
             '<b><i>Номер телефона:</i></b>\n'
-            f'{user_info[2]}\n'
+            f'{user_info[5]}\n'
             '<b><i>Комментарий:</i></b>\n'
-            f'{user_info[3]}',
+            f'{user_info[6]}',
             reply_markup=ReplyKeyboardMarkup(
                 [['Редактировать имя', 'Редактировать адрес'],
                  ['Редактировать номер', 'Редактировать комментарий'],
@@ -93,28 +96,47 @@ async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_info = get_user_info(update.message.chat_id)
-    match user_info[4]:
+    user_status = get_user_status(update.message.chat_id)[0]
+    match user_status:
         case Status.WAITING_FOR_NAME:
             insert_user_info(update.message.chat_id,
-                             name=update.message.text,
-                             state=Status.WAITING_FOR_ADDRESS)
+                             status=Status.WAITING_FOR_ADDRESS_HOUSE,
+                             name=update.message.text)
             await update.message.reply_html(
-                '<b>Введите адрес:</b>\n'
-                'Например:\n'
-                'ул. Ленина, д1к2, кв12, подъезд 2, этаж 3'
+                '<b>Введите номер дома:</b>'
             )
-        case Status.WAITING_FOR_ADDRESS:
+        case Status.WAITING_FOR_ADDRESS_HOUSE:
             insert_user_info(update.message.chat_id,
-                             address=update.message.text,
-                             state=Status.WAITING_FOR_PHONE)
+                             status=Status.WAITING_FOR_ADDRESS_ENTRANCE,
+                             house=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер подъезда:</b>'
+            )
+        case Status.WAITING_FOR_ADDRESS_ENTRANCE:
+            insert_user_info(update.message.chat_id,
+                             status=Status.WAITING_FOR_ADDRESS_FLOOR,
+                             entrance=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер этажа:</b>'
+            )
+        case Status.WAITING_FOR_ADDRESS_FLOOR:
+            insert_user_info(update.message.chat_id,
+                             status=Status.WAITING_FOR_ADDRESS_FLAT,
+                             floor=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер квартиры:</b>'
+            )
+        case Status.WAITING_FOR_ADDRESS_FLAT:
+            insert_user_info(update.message.chat_id,
+                             status=Status.WAITING_FOR_PHONE,
+                             flat=update.message.text)
             await update.message.reply_html(
                 '<b>Введите номер телефона:</b>'
             )
         case Status.WAITING_FOR_PHONE:
             insert_user_info(update.message.chat_id,
-                             phone=update.message.text,
-                             state=Status.READY_NO_COMMENT)
+                             status=Status.READY_NO_COMMENT,
+                             phone=update.message.text)
             await update.message.reply_html(
                 '<b>Хотите добавить комментарий?</b>',
                 reply_markup=ReplyKeyboardMarkup(
@@ -124,23 +146,41 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         case Status.EDIT_COMMENT:
             insert_user_info(update.message.chat_id,
-                             comment=update.message.text,
-                             state=Status.READY)
+                             status=Status.READY,
+                             comment=update.message.text)
             await check_details(update, context)
         case Status.EDIT_NAME:
-            insert_user_info(update.message.chat_id,
-                             name=update.message.text,
-                             state=Status.READY)
+            insert_user_info(update.message.chat_id, status=Status.READY,
+                             name=update.message.text)
             await check_details(update, context)
-        case Status.EDIT_ADDRESS:
+        case Status.EDIT_ADDRESS_HOUSE:
             insert_user_info(update.message.chat_id,
-                             address=update.message.text,
-                             state=Status.READY)
+                             status=Status.EDIT_ADDRESS_ENTRANCE,
+                             house=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер подъезда:</b>'
+            )
+        case Status.EDIT_ADDRESS_ENTRANCE:
+            insert_user_info(update.message.chat_id,
+                             status=Status.EDIT_ADDRESS_FLOOR,
+                             entrance=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер этажа:</b>'
+            )
+        case Status.EDIT_ADDRESS_FLOOR:
+            insert_user_info(update.message.chat_id,
+                             status=Status.EDIT_ADDRESS_FLAT,
+                             floor=update.message.text)
+            await update.message.reply_html(
+                '<b>Введите номер квартиры:</b>'
+            )
+        case Status.EDIT_ADDRESS_FLAT:
+            insert_user_info(update.message.chat_id, status=Status.READY,
+                             flat=update.message.text)
             await check_details(update, context)
         case Status.EDIT_PHONE:
-            insert_user_info(update.message.chat_id,
-                             phone=update.message.text,
-                             state=Status.READY)
+            insert_user_info(update.message.chat_id, status=Status.READY,
+                             phone=update.message.text)
             await check_details(update, context)
         case _:
             await unknown(update, context)
@@ -148,15 +188,14 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # pylint: disable=unused-argument
-    insert_user_info(update.message.chat_id,
-                     state=Status.EDIT_COMMENT)
+    insert_user_info(update.message.chat_id, status=Status.EDIT_COMMENT)
     await update.message.reply_html(
         '<b>Введите комментарий:</b>'
     )
 
 
 async def place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_info = get_user_info(update.message.chat_id)
+    user_info = get_user_details(update.message.chat_id)
     await context.bot.send_message(chat_id=413504212,
                                    text='<b>Детали заказа:</b>\n\n'
                                         '<b><i>Имя:</i></b>\n'
@@ -188,8 +227,7 @@ async def place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # pylint: disable=unused-argument
-    insert_user_info(update.message.chat_id,
-                     state=Status.EDIT_NAME)
+    insert_user_info(update.message.chat_id, status=Status.EDIT_NAME)
     await update.message.reply_html(
         '<b>Введите Имя:</b>'
     )
@@ -197,19 +235,15 @@ async def edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # pylint: disable=unused-argument
-    insert_user_info(update.message.chat_id,
-                     state=Status.EDIT_ADDRESS)
+    insert_user_info(update.message.chat_id, status=Status.EDIT_ADDRESS_HOUSE)
     await update.message.reply_html(
-        '<b>Введите адрес:</b>\n'
-        'Например:\n'
-        'ул. Ленина, д1к2, кв12, подъезд 2, этаж 3'
+        '<b>Введите номер дома:</b>'
     )
 
 
 async def edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # pylint: disable=unused-argument
-    insert_user_info(update.message.chat_id,
-                     state=Status.EDIT_PHONE)
+    insert_user_info(update.message.chat_id, status=Status.EDIT_PHONE)
     await update.message.reply_html(
         '<b>Введите номер телефона:</b>'
     )
@@ -223,39 +257,106 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 conn = None
 
 
-def get_user_info(chat_id):
+def get_user_details(chat_id):
     cur = conn.cursor()
-    cur.execute(f'SELECT name, address, phone, comment, state '
+    cur.execute(
+        f'SELECT name, house, entrance, floor, flat, phone, comment, status '
+        f'FROM user_info WHERE chat_id = {chat_id};')
+
+    return cur.fetchone()
+
+
+def get_user_status(chat_id):
+    cur = conn.cursor()
+    cur.execute(f'SELECT status '
                 f'FROM user_info WHERE chat_id = {chat_id};')
 
     return cur.fetchone()
 
 
-def insert_user_info(chat_id, name='', address='', comment='', phone='',
-                     state=Status.STARTED):
+def user_info_filled(chat_id):
+    cur = conn.cursor()
+    cur.execute(f'SELECT info_filled '
+                f'FROM user_info WHERE chat_id = {chat_id};')
+
+    return cur.fetchone()
+
+
+def insert_user_info(chat_id, status=Status.STARTED, **kwargs):
     sql = ''
-    match state:
-        case Status.STARTED:
-            sql = (f'INSERT INTO user_info(chat_id, state) '
-                   f'VALUES ({chat_id}, {state});')
-        case Status.WAITING_FOR_NAME | Status.EDIT_COMMENT:
-            sql = (f'UPDATE user_info SET state = {state} '
-                   f'WHERE chat_id = {chat_id};')
-        case Status.WAITING_FOR_ADDRESS:
-            sql = (f'UPDATE user_info SET state = {state}, name = "{name}" '
-                   f'WHERE chat_id = {chat_id};')
-        case Status.WAITING_FOR_PHONE:
+    if status == Status.STARTED:
+        user_status = get_user_status(chat_id)
+        if user_status is None:
+            sql = (f'INSERT OR IGNORE INTO user_info(chat_id, status) '
+                   f'VALUES ({chat_id}, {status});')
+        else:
             sql = (f'UPDATE user_info '
-                   f'SET state = {state}, address = "{address}" '
+                   f'SET status = {status} '
                    f'WHERE chat_id = {chat_id};')
-        case Status.READY_NO_COMMENT:
-            sql = (f'UPDATE user_info '
-                   f'SET state = {Status.READY}, phone = "{phone}" '
-                   f'WHERE chat_id = {chat_id};')
-        case Status.READY:
-            sql = (f'UPDATE user_info '
-                   f'SET state = {state}, comment = "{comment}" '
-                   f'WHERE chat_id = {chat_id};')
+    else:
+        user_status = get_user_status(chat_id)[0]
+        match user_status:
+            case Status.STARTED | Status.READY | Status.READY_NO_COMMENT:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status} '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_NAME:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, name = "{kwargs["name"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_ADDRESS_HOUSE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, house = "{kwargs["house"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_ADDRESS_ENTRANCE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, '
+                       f'entrance = "{kwargs["entrance"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_ADDRESS_FLOOR:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, floor = "{kwargs["floor"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_ADDRESS_FLAT:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, flat = "{kwargs["flat"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.WAITING_FOR_PHONE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, '
+                       f'phone = "{kwargs["phone"]}", '
+                       f'info_filled = 1 '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_COMMENT:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, '
+                       f'comment = "{kwargs["comment"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_NAME:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, name = "{kwargs["name"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_PHONE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, phone = "{kwargs["phone"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_ADDRESS_HOUSE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, house = "{kwargs["house"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_ADDRESS_ENTRANCE:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, '
+                       f'entrance = "{kwargs["entrance"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_ADDRESS_FLOOR:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, floor = "{kwargs["floor"]}" '
+                       f'WHERE chat_id = {chat_id};')
+            case Status.EDIT_ADDRESS_FLAT:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status}, flat = "{kwargs["flat"]}" '
+                       f'WHERE chat_id = {chat_id};')
 
     cur = conn.cursor()
     try:
@@ -272,10 +373,14 @@ if __name__ == '__main__':
                                   'id INTEGER PRIMARY KEY, '
                                   'chat_id INTEGER NOT NULL UNIQUE, '
                                   'name TEXT, '
-                                  'address TEXT, '
+                                  'house TEXT, '
+                                  'entrance TEXT, '
+                                  'floor TEXT, '
+                                  'flat TEXT, '
                                   'phone TEXT, '
                                   'comment TEXT, '
-                                  'state INTEGER NOT NULL);')
+                                  'status INTEGER NOT NULL, '
+                                  'info_filled INTEGER NOT NULL DEFAULT 0);')
 
     # create a database connection
     conn = create_connection(database)
