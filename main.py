@@ -10,8 +10,10 @@ logging.basicConfig(
 	level=logging.INFO
 )
 
-STARTED, WAITING_FOR_NAME, WAITING_FOR_ADDRESS, WAITING_FOR_PHONE, WAITING_FOR_COMMENT, READY_NO_COMMENT, \
-EDIT_NAME, EDIT_ADDRESS, EDIT_PHONE, EDIT_COMMENT, READY = range(11)
+
+class Status:
+	STARTED, WAITING_FOR_NAME, WAITING_FOR_ADDRESS, WAITING_FOR_PHONE, READY_NO_COMMENT, \
+	EDIT_NAME, EDIT_ADDRESS, EDIT_PHONE, EDIT_COMMENT, READY = range(10)
 
 
 def create_connection(db_file):
@@ -59,8 +61,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	user_info = get_user_info(update.message.chat_id)
-	if user_info[4] != READY:
-		insert_user_info(update.message.chat_id, state=WAITING_FOR_NAME)
+	if user_info[4] != Status.READY:
+		insert_user_info(update.message.chat_id, state=Status.WAITING_FOR_NAME)
 		await update.message.reply_html(
 			'<b>Введите Имя:</b>'
 		)
@@ -85,45 +87,45 @@ async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	user_info = get_user_info(update.message.chat_id)
-	if user_info[4] == WAITING_FOR_NAME:
-		insert_user_info(update.message.chat_id, name=update.message.text, state=WAITING_FOR_ADDRESS)
-		await update.message.reply_html(
-			'<b>Введите адрес:</b>\n'
-			'Например:\n'
-			'ул. Ленина, д1к2, кв12, подъезд 2, этаж 3'
-		)
-	elif user_info[4] == WAITING_FOR_ADDRESS:
-		insert_user_info(update.message.chat_id, address=update.message.text, state=WAITING_FOR_PHONE)
-		await update.message.reply_html(
-			'<b>Введите номер телефона:</b>'
-		)
-	elif user_info[4] == WAITING_FOR_PHONE:
-		insert_user_info(update.message.chat_id, phone=update.message.text, state=READY_NO_COMMENT)
-		await update.message.reply_html(
-			'<b>Хотите добавить комментарий?</b>',
-			reply_markup=ReplyKeyboardMarkup(
-				[["Редактировать комментарий", "Детали заказа"]], one_time_keyboard=True
+	match user_info[4]:
+		case Status.WAITING_FOR_NAME:
+			insert_user_info(update.message.chat_id, name=update.message.text, state=Status.WAITING_FOR_ADDRESS)
+			await update.message.reply_html(
+				'<b>Введите адрес:</b>\n'
+				'Например:\n'
+				'ул. Ленина, д1к2, кв12, подъезд 2, этаж 3'
 			)
-		)
-	elif user_info[4] == WAITING_FOR_COMMENT:
-		insert_user_info(update.message.chat_id, comment=update.message.text, state=READY)
-		await check_details(update, context)
-	elif user_info[4] == EDIT_NAME:
-		insert_user_info(update.message.chat_id, name=update.message.text, state=READY)
-		await check_details(update, context)
-	elif user_info[4] == EDIT_ADDRESS:
-		insert_user_info(update.message.chat_id, address=update.message.text, state=READY)
-		await check_details(update, context)
-	elif user_info[4] == EDIT_PHONE:
-		insert_user_info(update.message.chat_id, phone=update.message.text, state=READY)
-		await check_details(update, context)
-	elif user_info[4] == EDIT_COMMENT:
-		insert_user_info(update.message.chat_id, comment=update.message.text, state=READY)
-		await check_details(update, context)
+		case Status.WAITING_FOR_ADDRESS:
+			insert_user_info(update.message.chat_id, address=update.message.text, state=Status.WAITING_FOR_PHONE)
+			await update.message.reply_html(
+				'<b>Введите номер телефона:</b>'
+			)
+		case Status.WAITING_FOR_PHONE:
+			insert_user_info(update.message.chat_id, phone=update.message.text, state=Status.READY_NO_COMMENT)
+			await update.message.reply_html(
+				'<b>Хотите добавить комментарий?</b>',
+				reply_markup=ReplyKeyboardMarkup(
+					[["Редактировать комментарий", "Детали заказа"]], one_time_keyboard=True
+				)
+			)
+		case Status.EDIT_COMMENT:
+			insert_user_info(update.message.chat_id, comment=update.message.text, state=Status.READY)
+			await check_details(update, context)
+		case Status.EDIT_NAME:
+			insert_user_info(update.message.chat_id, name=update.message.text, state=Status.READY)
+			await check_details(update, context)
+		case Status.EDIT_ADDRESS:
+			insert_user_info(update.message.chat_id, address=update.message.text, state=Status.READY)
+			await check_details(update, context)
+		case Status.EDIT_PHONE:
+			insert_user_info(update.message.chat_id, phone=update.message.text, state=Status.READY)
+			await check_details(update, context)
+		case _:
+			await unknown(update, context)
 
 
-async def add_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	insert_user_info(update.message.chat_id, state=WAITING_FOR_COMMENT)
+async def edit_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	insert_user_info(update.message.chat_id, state=Status.EDIT_COMMENT)
 	await update.message.reply_html(
 		'<b>Введите комментарий:</b>'
 	)
@@ -161,14 +163,14 @@ async def place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	insert_user_info(update.message.chat_id, state=EDIT_NAME)
+	insert_user_info(update.message.chat_id, state=Status.EDIT_NAME)
 	await update.message.reply_html(
 		'<b>Введите Имя:</b>'
 	)
 
 
 async def edit_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	insert_user_info(update.message.chat_id, state=EDIT_ADDRESS)
+	insert_user_info(update.message.chat_id, state=Status.EDIT_ADDRESS)
 	await update.message.reply_html(
 		'<b>Введите адрес:</b>\n'
 		'Например:\n'
@@ -177,16 +179,9 @@ async def edit_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	insert_user_info(update.message.chat_id, state=EDIT_PHONE)
+	insert_user_info(update.message.chat_id, state=Status.EDIT_PHONE)
 	await update.message.reply_html(
 		'<b>Введите номер телефона:</b>'
-	)
-
-
-async def edit_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	insert_user_info(update.message.chat_id, state=EDIT_COMMENT)
-	await update.message.reply_html(
-		'<b>Введите комментарий:</b>'
 	)
 
 
@@ -204,20 +199,21 @@ def get_user_info(chat_id):
 	return cur.fetchone()
 
 
-def insert_user_info(chat_id, name='', address='', comment='', phone='', state=STARTED):
+def insert_user_info(chat_id, name='', address='', comment='', phone='', state=Status.STARTED):
 	sql = ''
-	if state == STARTED:
-		sql = f'INSERT INTO user_info(chat_id, state) VALUES ({chat_id}, {state});'
-	elif state == WAITING_FOR_NAME or state == WAITING_FOR_COMMENT:
-		sql = f'UPDATE user_info SET state = {state} WHERE chat_id = {chat_id};'
-	elif state == WAITING_FOR_ADDRESS:
-		sql = f'UPDATE user_info SET state = {state}, name = "{name}" WHERE chat_id = {chat_id};'
-	elif state == WAITING_FOR_PHONE:
-		sql = f'UPDATE user_info SET state = {state}, address = "{address}" WHERE chat_id = {chat_id};'
-	elif state == READY_NO_COMMENT:
-		sql = f'UPDATE user_info SET state = {READY}, phone = "{phone}" WHERE chat_id = {chat_id};'
-	elif state == READY:
-		sql = f'UPDATE user_info SET state = {state}, comment = "{comment}" WHERE chat_id = {chat_id};'
+	match state:
+		case Status.STARTED:
+			sql = f'INSERT INTO user_info(chat_id, state) VALUES ({chat_id}, {state});'
+		case Status.WAITING_FOR_NAME | Status.EDIT_COMMENT:
+			sql = f'UPDATE user_info SET state = {state} WHERE chat_id = {chat_id};'
+		case Status.WAITING_FOR_ADDRESS:
+			sql = f'UPDATE user_info SET state = {state}, name = "{name}" WHERE chat_id = {chat_id};'
+		case Status.WAITING_FOR_PHONE:
+			sql = f'UPDATE user_info SET state = {state}, address = "{address}" WHERE chat_id = {chat_id};'
+		case Status.READY_NO_COMMENT:
+			sql = f'UPDATE user_info SET state = {Status.READY}, phone = "{phone}" WHERE chat_id = {chat_id};'
+		case Status.READY:
+			sql = f'UPDATE user_info SET state = {state}, comment = "{comment}" WHERE chat_id = {chat_id};'
 
 	cur = conn.cursor()
 	try:
@@ -260,12 +256,11 @@ if __name__ == '__main__':
 			filters.Text(['Оформить заказ']) | filters.Text(['Детали заказа']) |
 			filters.Text(['Редактировать имя']) | filters.Text(['Редактировать адрес']) |
 			filters.Text(['Редактировать номер']) | filters.Text(['Редактировать комментарий'])), process_text)
-	add_comment_handler = MessageHandler(filters.Text(["Редактировать комментарий"]), add_comment)
+	add_comment_handler = MessageHandler(filters.Text(["Редактировать комментарий"]), edit_comment)
 	place_order_handler = MessageHandler(filters.Text(['Оформить заказ']), place_order)
 	edit_name_handler = MessageHandler(filters.Text(['Редактировать имя']), edit_name)
 	edit_address_handler = MessageHandler(filters.Text(['Редактировать адрес']), edit_address)
 	edit_phone_handler = MessageHandler(filters.Text(['Редактировать номер']), edit_phone)
-	edit_comment_handler = MessageHandler(filters.Text(['Редактировать комментарий']), edit_comment)
 
 	application.add_handler(start_handler)
 	application.add_handler(check_details_handler)
