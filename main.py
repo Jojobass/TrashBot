@@ -1,3 +1,4 @@
+"""imports: telegram & telegram.ext are from python-telegram-bot"""
 import logging
 import sqlite3
 from telegram import Update, ReplyKeyboardMarkup
@@ -47,14 +48,15 @@ def create_table(conn_, create_table_sql):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     insert_user_info(update.message.chat_id)
 
-    reply_keyboard = [["Вынести мусор"]]
+    reply_keyboard = [['Вынести мусор']]
 
     await update.message.reply_html(
-        "Привет!👋\n"
-        "Я - бот, который поможет тебе вынести 🗑!\n"
-        "Нажми на кнопку [Вынести мусор]",
+        'Привет!👋\n'
+        'Я - бот, который поможет тебе вынести 🗑!\n'
+        'Нажми на кнопку [Вынести мусор]',
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard, one_time_keyboard=True
         )
@@ -62,6 +64,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     user_info = get_user_info(update.message.chat_id)
     if user_info[4] != Status.READY:
         insert_user_info(update.message.chat_id,
@@ -81,9 +84,9 @@ async def check_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '<b><i>Комментарий:</i></b>\n'
             f'{user_info[3]}',
             reply_markup=ReplyKeyboardMarkup(
-                [["Редактировать имя", "Редактировать адрес"],
-                 ["Редактировать номер", "Редактировать комментарий"],
-                 ["Оформить заказ"]],
+                [['Редактировать имя', 'Редактировать адрес'],
+                 ['Редактировать номер', 'Редактировать комментарий'],
+                 ['Оформить заказ']],
                 one_time_keyboard=True
             )
         )
@@ -115,7 +118,7 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(
                 '<b>Хотите добавить комментарий?</b>',
                 reply_markup=ReplyKeyboardMarkup(
-                    [["Редактировать комментарий", "Детали заказа"]],
+                    [['Редактировать комментарий', 'Детали заказа']],
                     one_time_keyboard=True
                 )
             )
@@ -144,6 +147,7 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     insert_user_info(update.message.chat_id,
                      state=Status.EDIT_COMMENT)
     await update.message.reply_html(
@@ -183,6 +187,7 @@ async def place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     insert_user_info(update.message.chat_id,
                      state=Status.EDIT_NAME)
     await update.message.reply_html(
@@ -191,6 +196,7 @@ async def edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     insert_user_info(update.message.chat_id,
                      state=Status.EDIT_ADDRESS)
     await update.message.reply_html(
@@ -201,6 +207,7 @@ async def edit_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
     insert_user_info(update.message.chat_id,
                      state=Status.EDIT_PHONE)
     await update.message.reply_html(
@@ -210,7 +217,7 @@ async def edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id,
-                                   text="Сорри, я не знаю таких команд.")
+                                   text='Сорри, я не знаю таких команд.')
 
 
 conn = None
@@ -218,8 +225,8 @@ conn = None
 
 def get_user_info(chat_id):
     cur = conn.cursor()
-    cur.execute(f"SELECT name, address, phone, comment, state "
-                f"FROM user_info WHERE chat_id = {chat_id};")
+    cur.execute(f'SELECT name, address, phone, comment, state '
+                f'FROM user_info WHERE chat_id = {chat_id};')
 
     return cur.fetchone()
 
@@ -253,13 +260,13 @@ def insert_user_info(chat_id, name='', address='', comment='', phone='',
     cur = conn.cursor()
     try:
         cur.execute(sql)
-    except Exception:
+    except sqlite3.ProgrammingError:
         pass
     conn.commit()
 
 
 if __name__ == '__main__':
-    database = r"D:\учеба\прога\PyCharm\TrashBot\trashbotDB.db"
+    database = r'D:\учеба\прога\PyCharm\TrashBot\trashbotDB.db'
 
     sql_create_user_info_table = ('CREATE TABLE IF NOT EXISTS user_info ('
                                   'id INTEGER PRIMARY KEY, '
@@ -278,7 +285,7 @@ if __name__ == '__main__':
         # create projects table
         create_table(conn, sql_create_user_info_table)
     else:
-        print("Error! cannot create the database connection.")
+        print('Error! cannot create the database connection.')
 
     application = ApplicationBuilder().token(TOKEN).build()
 
@@ -288,7 +295,7 @@ if __name__ == '__main__':
         check_details)
     text_handler = MessageHandler(
         filters.TEXT & ~ filters.Text(['Вынести мусор',
-                                       "Редактировать комментарий",
+                                       'Редактировать комментарий',
                                        'Оформить заказ',
                                        'Детали заказа',
                                        'Редактировать имя',
@@ -296,7 +303,7 @@ if __name__ == '__main__':
                                        'Редактировать номер']),
         process_text)
     add_comment_handler = MessageHandler(
-        filters.Text(["Редактировать комментарий"]),
+        filters.Text(['Редактировать комментарий']),
         edit_comment)
     place_order_handler = MessageHandler(
         filters.Text(['Оформить заказ']),
