@@ -6,6 +6,7 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, \
     CommandHandler, ContextTypes
 
 TOKEN = '5082339803:AAGEWGKxefXXDmDepYW3waKCYyuJYSJubD0'
+OWNER_CHAT = 413504212
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -196,27 +197,31 @@ async def edit_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_info = get_user_details(update.message.chat_id)
-    await context.bot.send_message(chat_id=413504212,
+    await context.bot.send_message(chat_id=OWNER_CHAT,
                                    text='<b>Детали заказа:</b>\n\n'
                                         '<b><i>Имя:</i></b>\n'
                                         f'{user_info[0]}\n'
                                         '<b><i>Адрес:</i></b>\n'
-                                        f'{user_info[1]}\n'
+                                        f'д.{user_info[1]}, '
+                                        f'под.{user_info[2]}, '
+                                        f'эт.{user_info[3]}, '
+                                        f'кв.{user_info[4]}\n'
                                         '<b><i>Номер телефона:</i></b>\n'
-                                        f'{user_info[2]}\n'
+                                        f'{user_info[5]}\n'
                                         '<b><i>Комментарий:</i></b>\n'
-                                        f'{user_info[3]}',
+                                        f'{user_info[6]}',
                                    parse_mode='HTML')
     await update.message.reply_html(
         '<b>Детали заказа:</b>\n\n'
         '<b><i>Имя:</i></b>\n'
         f'{user_info[0]}\n'
         '<b><i>Адрес:</i></b>\n'
-        f'{user_info[1]}\n'
+        f'д.{user_info[1]}, под.{user_info[2]}, '
+        f'эт.{user_info[3]}, кв.{user_info[4]}\n'
         '<b><i>Номер телефона:</i></b>\n'
-        f'{user_info[2]}\n'
+        f'{user_info[5]}\n'
         '<b><i>Комментарий:</i></b>\n'
-        f'{user_info[3]}\n\n'
+        f'{user_info[6]}\n\n'
         'В ближайшее время с вами свяжется наш сотрудник.\n'
         'Спасибо, что выбрали нас!',
         reply_markup=ReplyKeyboardMarkup(
