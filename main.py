@@ -384,6 +384,7 @@ if __name__ == '__main__':
                                   'flat TEXT, '
                                   'phone TEXT, '
                                   'comment TEXT, '
+                                  'last_order TEXT, '
                                   'status INTEGER NOT NULL, '
                                   'info_filled INTEGER NOT NULL DEFAULT 0);')
 
@@ -404,13 +405,13 @@ if __name__ == '__main__':
         filters.Text(['Вынести мусор']) | filters.Text(['Детали заказа']),
         check_details)
     text_handler = MessageHandler(
-        filters.TEXT & ~ filters.Text(['Вынести мусор',
-                                       'Редактировать комментарий',
-                                       'Оформить заказ',
-                                       'Детали заказа',
-                                       'Редактировать имя',
-                                       'Редактировать адрес',
-                                       'Редактировать номер']),
+        filters.TEXT & ~filters.Text(['Вынести мусор',
+                                      'Редактировать комментарий',
+                                      'Оформить заказ',
+                                      'Детали заказа',
+                                      'Редактировать имя',
+                                      'Редактировать адрес',
+                                      'Редактировать номер']),
         process_text)
     add_comment_handler = MessageHandler(
         filters.Text(['Редактировать комментарий']),
@@ -433,6 +434,9 @@ if __name__ == '__main__':
     application.add_handler(text_handler)
     application.add_handler(add_comment_handler)
     application.add_handler(place_order_handler)
+    application.add_handler(edit_name_handler)
+    application.add_handler(edit_address_handler)
+    application.add_handler(edit_phone_handler)
 
     # Other handlers
     unknown_handler = MessageHandler(filters.COMMAND, unknown)
