@@ -391,7 +391,7 @@ def insert_user_info(chat_id, status=Status.STARTED, **kwargs):
 
 
 if __name__ == '__main__':
-    database = r'D:\учеба\прога\PyCharm\TrashBot\trashbotDB.db'
+    database = r'trashbotDB.db'
 
     sql_create_user_info_table = ('CREATE TABLE IF NOT EXISTS user_info ('
                                   'id INTEGER PRIMARY KEY, '
