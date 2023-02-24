@@ -20,7 +20,7 @@ class Status:
      WAITING_FOR_ADDRESS_FLAT, WAITING_FOR_PHONE,
      READY_NO_COMMENT, EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
      EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
-     READY, WAITING_FOR_PAYMENT) = range(17)
+     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT) = range(18)
 
 
 def create_connection(db_file):
@@ -254,6 +254,25 @@ async def edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def select_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
+    insert_user_info(update.message.chat_id, status=Status.SELECT_SERVICE)
+    await update.message.reply_html(
+        '<b>Выберите услугу:</b>',
+        reply_markup=ReplyKeyboardMarkup(
+            [['1 Пакет +1 бутылка [100₽]'],
+             ['2 Пакета +2 бутылки [150₽]'],
+             ['3-5 пакетов +3 бутылки [225₽]'],
+             ['Назад']], one_time_keyboard=True
+        )
+    )
+
+
+async def process_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # pylint: disable=unused-argument
+    pass
+
+
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id,
                                    text='Сорри, я не знаю таких команд.')
@@ -428,6 +447,15 @@ if __name__ == '__main__':
     edit_phone_handler = MessageHandler(
         filters.Text(['Редактировать номер']),
         edit_phone)
+    select_service_handler = MessageHandler(
+        filters.Text(['Выбрать услугу']),
+        select_service)
+    process_payment_handler = MessageHandler(
+        filters.Text(['1 Пакет +1 бутылка [100₽]',
+                      '2 Пакета +2 бутылки [150₽]',
+                      '3-5 пакетов +3 бутылки [225₽]']),
+        process_payment
+    )
 
     application.add_handler(start_handler)
     application.add_handler(check_details_handler)
@@ -437,6 +465,7 @@ if __name__ == '__main__':
     application.add_handler(edit_name_handler)
     application.add_handler(edit_address_handler)
     application.add_handler(edit_phone_handler)
+    application.add_handler(select_service_handler)
 
     # Other handlers
     unknown_handler = MessageHandler(filters.COMMAND, unknown)
