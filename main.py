@@ -24,13 +24,16 @@ class Status:
 
 
 class TrashBot:
-    # pylint: disable=missing-class-docstring
+    """Telegram bot application & DB handler"""
 
     def __init__(self):
         self.application = None
         self.conn = None
         self.connect()
         self.build_app()
+
+    def __del__(self):
+        self.conn.close()
 
     def connect(self):
         database = r'trashbotDB.db'
@@ -122,6 +125,8 @@ class TrashBot:
     def run(self):
         self.application.run_polling()
 
+    # ---------------------------- DB methods ---------------------------------
+
     @staticmethod
     def create_connection(db_file):
         """ create a database connection to the SQLite database
@@ -151,6 +156,10 @@ class TrashBot:
             print(e)
 
     def get_user_details(self, chat_id):
+        """Get all user details from DB.
+
+        :return: list([str, ...])
+        """
         cur = self.conn.cursor()
         cur.execute(
             f'SELECT name, '
@@ -159,13 +168,16 @@ class TrashBot:
             f'floor, '
             f'flat, '
             f'phone, '
-            f'comment, '
-            f'status '
+            f'comment '
             f'FROM user_info WHERE chat_id = {chat_id};')
 
         return cur.fetchone()
 
     def get_user_status(self, chat_id):
+        """Get user status from DB.
+
+        :return: list([int(status)])
+        """
         cur = self.conn.cursor()
         cur.execute(f'SELECT status '
                     f'FROM user_info WHERE chat_id = {chat_id};')
@@ -173,6 +185,10 @@ class TrashBot:
         return cur.fetchone()
 
     def user_info_filled(self, chat_id):
+        """Get info_filled from DB.
+
+        :return: list([int(info_filled)])
+        """
         cur = self.conn.cursor()
         cur.execute(f'SELECT info_filled '
                     f'FROM user_info WHERE chat_id = {chat_id};')
@@ -180,6 +196,12 @@ class TrashBot:
         return cur.fetchone()
 
     def insert_user_info(self, chat_id, status=Status.STARTED, **kwargs):
+        """Updates DB based on user status in DB.
+
+        If it's a first-time user inserts into DB.
+        If DB status is STARTED, READY or READY_NO_COMMENT only updates status.
+        Else updates corresponding value and status.
+        """
         sql = ''
         if status == Status.STARTED:
             user_status = self.get_user_status(chat_id)
@@ -193,7 +215,8 @@ class TrashBot:
         else:
             user_status = self.get_user_status(chat_id)[0]
             match user_status:
-                case Status.STARTED | Status.READY | Status.READY_NO_COMMENT:
+                case (Status.STARTED | Status.READY |
+                      Status.READY_NO_COMMENT | Status.SELECT_SERVICE):
                     sql = (f'UPDATE user_info '
                            f'SET status = {status} '
                            f'WHERE chat_id = {chat_id};')
@@ -270,55 +293,17 @@ class TrashBot:
         except sqlite3.ProgrammingError:
             pass
         self.conn.commit()
+        cur.close()
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id)
-
-        reply_keyboard = [['Вынести мусор']]
-
-        await update.message.reply_html(
-            'Привет!👋\n'
-            'Я - бот, который поможет тебе вынести 🗑!\n'
-            'Нажми на кнопку [Вынести мусор]',
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard, one_time_keyboard=True
-            )
-        )
-
-    async def check_details(self, update: Update,
-                            context: ContextTypes.DEFAULT_TYPE):
-        # pylint: disable=unused-argument
-        user_info = self.get_user_details(update.message.chat_id)
-        user_filled = self.user_info_filled(update.message.chat_id)[0]
-        if not user_filled:
-            self.insert_user_info(update.message.chat_id,
-                                  status=Status.WAITING_FOR_NAME)
-            await update.message.reply_html(
-                '<b>Введите Имя:</b>'
-            )
-        else:
-            await update.message.reply_html(
-                '<b>Сохраненные данные:</b>\n\n'
-                '<b><i>Имя:</i></b>\n'
-                f'{user_info[0]}\n'
-                '<b><i>Адрес:</i></b>\n'
-                f'{user_info[1]}, {user_info[2]}, '
-                f'{user_info[3]}, {user_info[4]}\n'
-                '<b><i>Номер телефона:</i></b>\n'
-                f'{user_info[5]}\n'
-                '<b><i>Комментарий:</i></b>\n'
-                f'{user_info[6]}',
-                reply_markup=ReplyKeyboardMarkup(
-                    [['Редактировать имя', 'Редактировать адрес'],
-                     ['Редактировать номер', 'Редактировать комментарий'],
-                     ['Выбрать услугу']],
-                    one_time_keyboard=True
-                )
-            )
+    # ----------------- Handler for custom input info--------------------------
 
     async def process_text(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
+        """Performs operations based on user status in DB.
+
+        Status is formulated like 'waiting for ...' or 'edit ...',
+        which means we need to update corresponding value in DB & status.
+        """
         user_status = self.get_user_status(update.message.chat_id)[0]
         match user_status:
             case Status.WAITING_FOR_NAME:
@@ -413,6 +398,60 @@ class TrashBot:
             case _:
                 await self.unknown(update, context)
 
+    # --------------------------- Handlers ------------------------------------
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # pylint: disable=unused-argument
+        self.insert_user_info(update.message.chat_id)
+
+        reply_keyboard = [['Вынести мусор']]
+
+        await update.message.reply_html(
+            'Привет!👋\n'
+            'Я - бот, который поможет тебе вынести 🗑!\n'
+            'Нажми на кнопку [Вынести мусор]',
+            reply_markup=ReplyKeyboardMarkup(
+                reply_keyboard, one_time_keyboard=True
+            )
+        )
+
+    async def check_details(self, update: Update,
+                            context: ContextTypes.DEFAULT_TYPE):
+        # pylint: disable=unused-argument
+        """Check user details if filled.
+
+        Column info_filled is set to 1 after first filling the user details.
+        So if it's 0, gotta fill the details.
+        Else, show all details to user, who can edit them or order.
+        """
+        user_info = self.get_user_details(update.message.chat_id)
+        user_filled = self.user_info_filled(update.message.chat_id)[0]
+        if not user_filled:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.WAITING_FOR_NAME)
+            await update.message.reply_html(
+                '<b>Введите Имя:</b>'
+            )
+        else:
+            await update.message.reply_html(
+                '<b>Сохраненные данные:</b>\n\n'
+                '<b><i>Имя:</i></b>\n'
+                f'{user_info[0]}\n'
+                '<b><i>Адрес:</i></b>\n'
+                f'{user_info[1]}, {user_info[2]}, '
+                f'{user_info[3]}, {user_info[4]}\n'
+                '<b><i>Номер телефона:</i></b>\n'
+                f'{user_info[5]}\n'
+                '<b><i>Комментарий:</i></b>\n'
+                f'{user_info[6]}',
+                reply_markup=ReplyKeyboardMarkup(
+                    [['Редактировать имя', 'Редактировать адрес'],
+                     ['Редактировать номер', 'Редактировать комментарий'],
+                     ['Выбрать услугу']],
+                    one_time_keyboard=True
+                )
+            )
+
     async def edit_comment(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
@@ -420,41 +459,6 @@ class TrashBot:
                               status=Status.EDIT_COMMENT)
         await update.message.reply_html(
             '<b>Введите комментарий:</b>'
-        )
-
-    async def place_order(self, update: Update,
-                          context: ContextTypes.DEFAULT_TYPE):
-        user_info = self.get_user_details(update.message.chat_id)
-        await context.bot.send_message(chat_id=OWNER_CHAT,
-                                       text='<b>Детали заказа:</b>\n\n'
-                                            '<b><i>Имя:</i></b>\n'
-                                            f'{user_info[0]}\n'
-                                            '<b><i>Адрес:</i></b>\n'
-                                            f'д.{user_info[1]}, '
-                                            f'под.{user_info[2]}, '
-                                            f'эт.{user_info[3]}, '
-                                            f'кв.{user_info[4]}\n'
-                                            '<b><i>Номер телефона:</i></b>\n'
-                                            f'{user_info[5]}\n'
-                                            '<b><i>Комментарий:</i></b>\n'
-                                            f'{user_info[6]}',
-                                       parse_mode='HTML')
-        await update.message.reply_html(
-            '<b>Детали заказа:</b>\n\n'
-            '<b><i>Имя:</i></b>\n'
-            f'{user_info[0]}\n'
-            '<b><i>Адрес:</i></b>\n'
-            f'д.{user_info[1]}, под.{user_info[2]}, '
-            f'эт.{user_info[3]}, кв.{user_info[4]}\n'
-            '<b><i>Номер телефона:</i></b>\n'
-            f'{user_info[5]}\n'
-            '<b><i>Комментарий:</i></b>\n'
-            f'{user_info[6]}\n\n'
-            'В ближайшее время с вами свяжется наш сотрудник.\n'
-            'Спасибо, что выбрали нас!',
-            reply_markup=ReplyKeyboardMarkup(
-                [['Вынести мусор']], one_time_keyboard=True
-            )
         )
 
     async def edit_name(self, update: Update,
@@ -506,6 +510,44 @@ class TrashBot:
                 [['Оформить заказ']], one_time_keyboard=True
             )
         )
+
+    async def place_order(self, update: Update,
+                          context: ContextTypes.DEFAULT_TYPE):
+        """Send order to owner chat, show order details to user."""
+        self.insert_user_info(update.message.chat_id, status=Status.READY)
+        user_info = self.get_user_details(update.message.chat_id)
+        await context.bot.send_message(chat_id=OWNER_CHAT,
+                                       text='<b>Детали заказа:</b>\n\n'
+                                            '<b><i>Имя:</i></b>\n'
+                                            f'{user_info[0]}\n'
+                                            '<b><i>Адрес:</i></b>\n'
+                                            f'д.{user_info[1]}, '
+                                            f'под.{user_info[2]}, '
+                                            f'эт.{user_info[3]}, '
+                                            f'кв.{user_info[4]}\n'
+                                            '<b><i>Номер телефона:</i></b>\n'
+                                            f'{user_info[5]}\n'
+                                            '<b><i>Комментарий:</i></b>\n'
+                                            f'{user_info[6]}',
+                                       parse_mode='HTML')
+        await update.message.reply_html(
+            '<b>Детали заказа:</b>\n\n'
+            '<b><i>Имя:</i></b>\n'
+            f'{user_info[0]}\n'
+            '<b><i>Адрес:</i></b>\n'
+            f'д.{user_info[1]}, под.{user_info[2]}, '
+            f'эт.{user_info[3]}, кв.{user_info[4]}\n'
+            '<b><i>Номер телефона:</i></b>\n'
+            f'{user_info[5]}\n'
+            '<b><i>Комментарий:</i></b>\n'
+            f'{user_info[6]}\n\n'
+            'В ближайшее время с вами свяжется наш сотрудник.\n'
+            'Спасибо, что выбрали нас!',
+            reply_markup=ReplyKeyboardMarkup(
+                [['Вынести мусор']], one_time_keyboard=True
+            )
+        )
+
 
     @staticmethod
     async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
