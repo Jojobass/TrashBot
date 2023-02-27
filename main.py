@@ -25,6 +25,103 @@ class Status:
 
 class TrashBot:
     # pylint: disable=missing-class-docstring
+
+    def __init__(self):
+        self.application = None
+        self.conn = None
+        self.connect()
+        self.build_app()
+
+    def connect(self):
+        database = r'trashbotDB.db'
+
+        sql_create_user_info_table = ('CREATE TABLE IF NOT EXISTS user_info ('
+                                      'id INTEGER PRIMARY KEY, '
+                                      'chat_id INTEGER NOT NULL UNIQUE, '
+                                      'name TEXT, '
+                                      'house TEXT, '
+                                      'entrance TEXT, '
+                                      'floor TEXT, '
+                                      'flat TEXT, '
+                                      'phone TEXT, '
+                                      'comment TEXT, '
+                                      'last_order TEXT, '
+                                      'status INTEGER NOT NULL, '
+                                      'info_filled INTEGER NOT NULL DEFAULT 0'
+                                      ');')
+
+        # create a database connection
+        self.conn = self.create_connection(database)
+
+        # create tables
+        if self.conn is not None:
+            # create projects table
+            self.create_table(self.conn, sql_create_user_info_table)
+        else:
+            print('Error! cannot create the database connection.')
+
+    def build_app(self):
+        self.application = ApplicationBuilder().token(TOKEN).build()
+
+        start_handler = CommandHandler('start', self.start)
+        check_details_handler = MessageHandler(
+            filters.Text(['Вынести мусор', 'Детали заказа']),
+            self.check_details)
+        text_handler = MessageHandler(
+            filters.TEXT & ~filters.Text(['Вынести мусор',
+                                          'Редактировать комментарий',
+                                          'Оформить заказ',
+                                          'Детали заказа',
+                                          'Редактировать имя',
+                                          'Редактировать адрес',
+                                          'Редактировать номер',
+                                          'Выбрать услугу',
+                                          '1 Пакет +1 бутылка [100₽]',
+                                          '2 Пакета +2 бутылки [150₽]',
+                                          '3-5 пакетов +3 бутылки [225₽]']),
+            self.process_text)
+        add_comment_handler = MessageHandler(
+            filters.Text(['Редактировать комментарий']),
+            self.edit_comment)
+        place_order_handler = MessageHandler(
+            filters.Text(['Оформить заказ']),
+            self.place_order)
+        edit_name_handler = MessageHandler(
+            filters.Text(['Редактировать имя']),
+            self.edit_name)
+        edit_address_handler = MessageHandler(
+            filters.Text(['Редактировать адрес']),
+            self.edit_address)
+        edit_phone_handler = MessageHandler(
+            filters.Text(['Редактировать номер']),
+            self.edit_phone)
+        select_service_handler = MessageHandler(
+            filters.Text(['Выбрать услугу']),
+            self.select_service)
+        process_payment_handler = MessageHandler(
+            filters.Text(['1 Пакет +1 бутылка [100₽]',
+                          '2 Пакета +2 бутылки [150₽]',
+                          '3-5 пакетов +3 бутылки [225₽]']),
+            self.process_payment)
+
+        self.application.add_handler(start_handler)
+        self.application.add_handler(check_details_handler)
+        self.application.add_handler(text_handler)
+        self.application.add_handler(add_comment_handler)
+        self.application.add_handler(place_order_handler)
+        self.application.add_handler(edit_name_handler)
+        self.application.add_handler(edit_address_handler)
+        self.application.add_handler(edit_phone_handler)
+        self.application.add_handler(select_service_handler)
+        self.application.add_handler(process_payment_handler)
+
+        # Other handlers
+        unknown_handler = MessageHandler(filters.COMMAND, self.unknown)
+        self.application.add_handler(unknown_handler)
+
+    def run(self):
+        self.application.run_polling()
+
     @staticmethod
     def create_connection(db_file):
         """ create a database connection to the SQLite database
@@ -52,6 +149,127 @@ class TrashBot:
             c.execute(create_table_sql)
         except sqlite3.Error as e:
             print(e)
+
+    def get_user_details(self, chat_id):
+        cur = self.conn.cursor()
+        cur.execute(
+            f'SELECT name, '
+            f'house, '
+            f'entrance, '
+            f'floor, '
+            f'flat, '
+            f'phone, '
+            f'comment, '
+            f'status '
+            f'FROM user_info WHERE chat_id = {chat_id};')
+
+        return cur.fetchone()
+
+    def get_user_status(self, chat_id):
+        cur = self.conn.cursor()
+        cur.execute(f'SELECT status '
+                    f'FROM user_info WHERE chat_id = {chat_id};')
+
+        return cur.fetchone()
+
+    def user_info_filled(self, chat_id):
+        cur = self.conn.cursor()
+        cur.execute(f'SELECT info_filled '
+                    f'FROM user_info WHERE chat_id = {chat_id};')
+
+        return cur.fetchone()
+
+    def insert_user_info(self, chat_id, status=Status.STARTED, **kwargs):
+        sql = ''
+        if status == Status.STARTED:
+            user_status = self.get_user_status(chat_id)
+            if user_status is None:
+                sql = (f'INSERT OR IGNORE INTO user_info(chat_id, status) '
+                       f'VALUES ({chat_id}, {status});')
+            else:
+                sql = (f'UPDATE user_info '
+                       f'SET status = {status} '
+                       f'WHERE chat_id = {chat_id};')
+        else:
+            user_status = self.get_user_status(chat_id)[0]
+            match user_status:
+                case Status.STARTED | Status.READY | Status.READY_NO_COMMENT:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status} '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_NAME:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'name = "{kwargs["name"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_ADDRESS_HOUSE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'house = "{kwargs["house"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_ADDRESS_ENTRANCE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'entrance = "{kwargs["entrance"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_ADDRESS_FLOOR:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'floor = "{kwargs["floor"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_ADDRESS_FLAT:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'flat = "{kwargs["flat"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.WAITING_FOR_PHONE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'phone = "{kwargs["phone"]}", '
+                           f'info_filled = 1 '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_COMMENT:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'comment = "{kwargs["comment"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_NAME:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'name = "{kwargs["name"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_PHONE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'phone = "{kwargs["phone"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_ADDRESS_HOUSE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'house = "{kwargs["house"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_ADDRESS_ENTRANCE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'entrance = "{kwargs["entrance"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_ADDRESS_FLOOR:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'floor = "{kwargs["floor"]}" '
+                           f'WHERE chat_id = {chat_id};')
+                case Status.EDIT_ADDRESS_FLAT:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'flat = "{kwargs["flat"]}" '
+                           f'WHERE chat_id = {chat_id};')
+
+        cur = self.conn.cursor()
+        try:
+            cur.execute(sql)
+        except sqlite3.ProgrammingError:
+            pass
+        self.conn.commit()
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
@@ -294,216 +512,7 @@ class TrashBot:
         await context.bot.send_message(chat_id=update.effective_chat.id,
                                        text='Сорри, я не знаю таких команд.')
 
-    def __init__(self):
-        self.conn = None
-
-    def get_user_details(self, chat_id):
-        cur = self.conn.cursor()
-        cur.execute(
-            f'SELECT name, '
-            f'house, '
-            f'entrance, '
-            f'floor, '
-            f'flat, '
-            f'phone, '
-            f'comment, '
-            f'status '
-            f'FROM user_info WHERE chat_id = {chat_id};')
-
-        return cur.fetchone()
-
-    def get_user_status(self, chat_id):
-        cur = self.conn.cursor()
-        cur.execute(f'SELECT status '
-                    f'FROM user_info WHERE chat_id = {chat_id};')
-
-        return cur.fetchone()
-
-    def user_info_filled(self, chat_id):
-        cur = self.conn.cursor()
-        cur.execute(f'SELECT info_filled '
-                    f'FROM user_info WHERE chat_id = {chat_id};')
-
-        return cur.fetchone()
-
-    def insert_user_info(self, chat_id, status=Status.STARTED, **kwargs):
-        sql = ''
-        if status == Status.STARTED:
-            user_status = self.get_user_status(chat_id)
-            if user_status is None:
-                sql = (f'INSERT OR IGNORE INTO user_info(chat_id, status) '
-                       f'VALUES ({chat_id}, {status});')
-            else:
-                sql = (f'UPDATE user_info '
-                       f'SET status = {status} '
-                       f'WHERE chat_id = {chat_id};')
-        else:
-            user_status = self.get_user_status(chat_id)[0]
-            match user_status:
-                case Status.STARTED | Status.READY | Status.READY_NO_COMMENT:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status} '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_NAME:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'name = "{kwargs["name"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_ADDRESS_HOUSE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'house = "{kwargs["house"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_ADDRESS_ENTRANCE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'entrance = "{kwargs["entrance"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_ADDRESS_FLOOR:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'floor = "{kwargs["floor"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_ADDRESS_FLAT:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'flat = "{kwargs["flat"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.WAITING_FOR_PHONE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'phone = "{kwargs["phone"]}", '
-                           f'info_filled = 1 '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_COMMENT:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'comment = "{kwargs["comment"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_NAME:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'name = "{kwargs["name"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_PHONE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'phone = "{kwargs["phone"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_ADDRESS_HOUSE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'house = "{kwargs["house"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_ADDRESS_ENTRANCE:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'entrance = "{kwargs["entrance"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_ADDRESS_FLOOR:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'floor = "{kwargs["floor"]}" '
-                           f'WHERE chat_id = {chat_id};')
-                case Status.EDIT_ADDRESS_FLAT:
-                    sql = (f'UPDATE user_info '
-                           f'SET status = {status}, '
-                           f'flat = "{kwargs["flat"]}" '
-                           f'WHERE chat_id = {chat_id};')
-
-        cur = self.conn.cursor()
-        try:
-            cur.execute(sql)
-        except sqlite3.ProgrammingError:
-            pass
-        self.conn.commit()
-
-    def main(self):
-        database = r'trashbotDB.db'
-
-        sql_create_user_info_table = ('CREATE TABLE IF NOT EXISTS user_info ('
-                                      'id INTEGER PRIMARY KEY, '
-                                      'chat_id INTEGER NOT NULL UNIQUE, '
-                                      'name TEXT, '
-                                      'house TEXT, '
-                                      'entrance TEXT, '
-                                      'floor TEXT, '
-                                      'flat TEXT, '
-                                      'phone TEXT, '
-                                      'comment TEXT, '
-                                      'last_order TEXT, '
-                                      'status INTEGER NOT NULL, '
-                                      'info_filled INTEGER NOT NULL DEFAULT 0'
-                                      ');')
-
-        # create a database connection
-        self.conn = self.create_connection(database)
-
-        # create tables
-        if self.conn is not None:
-            # create projects table
-            self.create_table(self.conn, sql_create_user_info_table)
-        else:
-            print('Error! cannot create the database connection.')
-
-        application = ApplicationBuilder().token(TOKEN).build()
-
-        start_handler = CommandHandler('start', self.start)
-        check_details_handler = MessageHandler(
-            filters.Text(['Вынести мусор']) | filters.Text(['Детали заказа']),
-            self.check_details)
-        text_handler = MessageHandler(
-            filters.TEXT & ~filters.Text(['Вынести мусор',
-                                          'Редактировать комментарий',
-                                          'Оформить заказ',
-                                          'Детали заказа',
-                                          'Редактировать имя',
-                                          'Редактировать адрес',
-                                          'Редактировать номер']),
-            self.process_text)
-        add_comment_handler = MessageHandler(
-            filters.Text(['Редактировать комментарий']),
-            self.edit_comment)
-        place_order_handler = MessageHandler(
-            filters.Text(['Оформить заказ']),
-            self.place_order)
-        edit_name_handler = MessageHandler(
-            filters.Text(['Редактировать имя']),
-            self.edit_name)
-        edit_address_handler = MessageHandler(
-            filters.Text(['Редактировать адрес']),
-            self.edit_address)
-        edit_phone_handler = MessageHandler(
-            filters.Text(['Редактировать номер']),
-            self.edit_phone)
-        select_service_handler = MessageHandler(
-            filters.Text(['Выбрать услугу']),
-            self.select_service)
-        process_payment_handler = MessageHandler(
-            filters.Text(['1 Пакет +1 бутылка [100₽]',
-                          '2 Пакета +2 бутылки [150₽]',
-                          '3-5 пакетов +3 бутылки [225₽]']),
-            self.process_payment
-        )
-
-        application.add_handler(start_handler)
-        application.add_handler(check_details_handler)
-        application.add_handler(text_handler)
-        application.add_handler(add_comment_handler)
-        application.add_handler(place_order_handler)
-        application.add_handler(edit_name_handler)
-        application.add_handler(edit_address_handler)
-        application.add_handler(edit_phone_handler)
-        application.add_handler(select_service_handler)
-        application.add_handler(process_payment_handler)
-
-        # Other handlers
-        unknown_handler = MessageHandler(filters.COMMAND, self.unknown)
-        application.add_handler(unknown_handler)
-
-        application.run_polling()
-
 
 if __name__ == '__main__':
     bot = TrashBot()
-    bot.main()
+    bot.run()
