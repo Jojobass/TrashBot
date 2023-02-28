@@ -6,7 +6,8 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, \
     CommandHandler, ContextTypes
 
 TOKEN = '5025597859:AAEWXRIIXFHWLeC7kCZThTzokzZigK2d2Uc'
-OWNER_CHAT = 413504212
+OWNER_CHAT = -801906112
+OWNER_USERNAME = '@Jojobasc'
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -41,6 +42,7 @@ class TrashBot:
         sql_create_user_info_table = ('CREATE TABLE IF NOT EXISTS user_info ('
                                       'id INTEGER PRIMARY KEY, '
                                       'chat_id INTEGER NOT NULL UNIQUE, '
+                                      'username TEXT NOT NULL UNIQUE, '
                                       'name TEXT, '
                                       'house TEXT, '
                                       'entrance TEXT, '
@@ -66,46 +68,71 @@ class TrashBot:
     def build_app(self):
         self.application = ApplicationBuilder().token(TOKEN).build()
 
-        start_handler = CommandHandler('start', self.start)
+        start_handler = CommandHandler('start', self.start,
+                                       filters=filters.ChatType.PRIVATE)
         check_details_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Вынести мусор', 'Детали заказа']),
             self.check_details)
         text_handler = MessageHandler(
-            filters.TEXT & ~filters.Text(['Вынести мусор',
-                                          'Редактировать комментарий',
-                                          'Оформить заказ',
-                                          'Детали заказа',
-                                          'Редактировать имя',
-                                          'Редактировать адрес',
-                                          'Редактировать номер',
-                                          'Выбрать услугу',
-                                          '1 Пакет +1 бутылка [100₽]',
-                                          '2 Пакета +2 бутылки [150₽]',
-                                          '3-5 пакетов +3 бутылки [225₽]']),
+            (filters.TEXT &
+             filters.ChatType.PRIVATE &
+             ~filters.Text(['Вынести мусор',
+                            'Редактировать комментарий',
+                            'Оформить заказ',
+                            'Детали заказа',
+                            'Редактировать имя',
+                            'Редактировать адрес',
+                            'Редактировать номер',
+                            'Выбрать услугу',
+                            '1 Пакет +1 бутылка [100₽]',
+                            '2 Пакета +2 бутылки [150₽]',
+                            '3-5 пакетов +3 бутылки [225₽]'])),
             self.process_text)
         add_comment_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Редактировать комментарий']),
             self.edit_comment)
         place_order_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Оформить заказ']),
             self.place_order)
         edit_name_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Редактировать имя']),
             self.edit_name)
         edit_address_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Редактировать адрес']),
             self.edit_address)
         edit_phone_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Редактировать номер']),
             self.edit_phone)
         select_service_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['Выбрать услугу']),
             self.select_service)
         process_payment_handler = MessageHandler(
+            filters.ChatType.PRIVATE &
             filters.Text(['1 Пакет +1 бутылка [100₽]',
                           '2 Пакета +2 бутылки [150₽]',
                           '3-5 пакетов +3 бутылки [225₽]']),
             self.process_payment)
+
+        class TwoEntities(filters.MessageFilter):
+            def filter(self, message):
+                return len(message.parse_entities()) == 2
+
+        # Remember to initialize the class.
+        two_entities = TwoEntities()
+
+        delegate_order_handler = MessageHandler(
+            (filters.TEXT & filters.Entity('mention') &
+             two_entities &
+             filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
+             filters.User(username=OWNER_USERNAME, allow_empty=True)),
+            self.delegate_order)
 
         self.application.add_handler(start_handler)
         self.application.add_handler(check_details_handler)
@@ -117,9 +144,12 @@ class TrashBot:
         self.application.add_handler(edit_phone_handler)
         self.application.add_handler(select_service_handler)
         self.application.add_handler(process_payment_handler)
+        self.application.add_handler(delegate_order_handler)
 
         # Other handlers
-        unknown_handler = MessageHandler(filters.COMMAND, self.unknown)
+        unknown_handler = MessageHandler(filters.ChatType.PRIVATE &
+                                         filters.COMMAND,
+                                         self.unknown)
         self.application.add_handler(unknown_handler)
 
     def run(self):
@@ -195,6 +225,13 @@ class TrashBot:
 
         return cur.fetchone()
 
+    def get_user_by_username(self, username):
+        cur = self.conn.cursor()
+        cur.execute(f'SELECT chat_id '
+                    f'FROM user_info WHERE username = {username[1:]};')
+
+        return cur.fetchone()
+
     def insert_user_info(self, chat_id, status=Status.STARTED, **kwargs):
         """Updates DB based on user status in DB.
 
@@ -206,8 +243,12 @@ class TrashBot:
         if status == Status.STARTED:
             user_status = self.get_user_status(chat_id)
             if user_status is None:
-                sql = (f'INSERT OR IGNORE INTO user_info(chat_id, status) '
-                       f'VALUES ({chat_id}, {status});')
+                sql = (f'INSERT OR IGNORE '
+                       f'INTO user_info(chat_id, status, username) '
+                       f'VALUES ({chat_id}, '
+                       f'{status}, '
+                       f'"{kwargs["username"]}"'
+                       f');')
             else:
                 sql = (f'UPDATE user_info '
                        f'SET status = {status} '
@@ -294,6 +335,33 @@ class TrashBot:
             pass
         self.conn.commit()
         cur.close()
+
+    # -------------------- Handlers for workers -------------------------------
+
+    async def send_order(self, update: Update,
+                         context: ContextTypes.DEFAULT_TYPE, user_info):
+        # pylint: disable=unused-argument
+        await context.bot.send_message(chat_id=OWNER_CHAT,
+                                       text='<b>Детали заказа:</b>\n\n'
+                                            '<b><i>Имя:</i></b>\n'
+                                            f'{user_info[0]}\n'
+                                            '<b><i>Адрес:</i></b>\n'
+                                            f'д.{user_info[1]}, '
+                                            f'под.{user_info[2]}, '
+                                            f'эт.{user_info[3]}, '
+                                            f'кв.{user_info[4]}\n'
+                                            '<b><i>Номер телефона:</i></b>\n'
+                                            f'{user_info[5]}\n'
+                                            '<b><i>Комментарий:</i></b>\n'
+                                            f'{user_info[6]}',
+                                       parse_mode='HTML'
+                                       )
+
+    async def delegate_order(self, update: Update,
+                             context: ContextTypes.DEFAULT_TYPE):
+        # pylint: disable=unused-argument
+        print(update.message)
+        pass
 
     # ----------------- Handler for custom input info--------------------------
 
@@ -402,7 +470,8 @@ class TrashBot:
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id)
+        self.insert_user_info(update.message.chat_id,
+                              username=update.message.chat.username)
 
         reply_keyboard = [['Вынести мусор']]
 
@@ -516,20 +585,7 @@ class TrashBot:
         """Send order to owner chat, show order details to user."""
         self.insert_user_info(update.message.chat_id, status=Status.READY)
         user_info = self.get_user_details(update.message.chat_id)
-        await context.bot.send_message(chat_id=OWNER_CHAT,
-                                       text='<b>Детали заказа:</b>\n\n'
-                                            '<b><i>Имя:</i></b>\n'
-                                            f'{user_info[0]}\n'
-                                            '<b><i>Адрес:</i></b>\n'
-                                            f'д.{user_info[1]}, '
-                                            f'под.{user_info[2]}, '
-                                            f'эт.{user_info[3]}, '
-                                            f'кв.{user_info[4]}\n'
-                                            '<b><i>Номер телефона:</i></b>\n'
-                                            f'{user_info[5]}\n'
-                                            '<b><i>Комментарий:</i></b>\n'
-                                            f'{user_info[6]}',
-                                       parse_mode='HTML')
+        await self.send_order(update, context, user_info)
         await update.message.reply_html(
             '<b>Детали заказа:</b>\n\n'
             '<b><i>Имя:</i></b>\n'
@@ -547,7 +603,6 @@ class TrashBot:
                 [['Вынести мусор']], one_time_keyboard=True
             )
         )
-
 
     @staticmethod
     async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
