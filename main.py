@@ -54,6 +54,14 @@ class TrashBot:
                                       'status INTEGER NOT NULL, '
                                       'info_filled INTEGER NOT NULL DEFAULT 0'
                                       ');')
+        sql_create_order_info_table = ('CREATE TABLE IF NOT EXISTS order_info ('
+                                       'id INTEGER PRIMARY KEY, '
+                                       'customer_id INTEGER NOT NULL, '
+                                       'address TEXT, '
+                                       'phone TEXT, '
+                                       'comment TEXT, '
+                                       'worker_username TEXT, '
+                                       'status TEXT default "Обрабатывается");')
 
         # create a database connection
         self.conn = self.create_connection(database)
@@ -62,8 +70,21 @@ class TrashBot:
         if self.conn is not None:
             # create projects table
             self.create_table(self.conn, sql_create_user_info_table)
+            self.create_table(self.conn, sql_create_order_info_table)
         else:
             print('Error! cannot create the database connection.')
+
+    ALL_KEYWORDS = ['Вынести мусор',
+                    'Редактировать комментарий',
+                    'Оформить заказ',
+                    'Детали заказа',
+                    'Редактировать имя',
+                    'Редактировать адрес',
+                    'Редактировать номер',
+                    'Выбрать услугу',
+                    '1 Пакет +1 бутылка [100₽]',
+                    '2 Пакета +2 бутылки [150₽]',
+                    '3-5 пакетов +3 бутылки [225₽]']
 
     def build_app(self):
         self.application = ApplicationBuilder().token(TOKEN).build()
@@ -77,17 +98,7 @@ class TrashBot:
         text_handler = MessageHandler(
             (filters.TEXT &
              filters.ChatType.PRIVATE &
-             ~filters.Text(['Вынести мусор',
-                            'Редактировать комментарий',
-                            'Оформить заказ',
-                            'Детали заказа',
-                            'Редактировать имя',
-                            'Редактировать адрес',
-                            'Редактировать номер',
-                            'Выбрать услугу',
-                            '1 Пакет +1 бутылка [100₽]',
-                            '2 Пакета +2 бутылки [150₽]',
-                            '3-5 пакетов +3 бутылки [225₽]'])),
+             ~filters.Text(self.ALL_KEYWORDS)),
             self.process_text)
         add_comment_handler = MessageHandler(
             filters.ChatType.PRIVATE &
