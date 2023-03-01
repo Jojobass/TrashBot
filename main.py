@@ -21,7 +21,7 @@ class Status:
      WAITING_FOR_ADDRESS_FLAT, WAITING_FOR_PHONE,
      READY_NO_COMMENT, EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
      EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
-     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT) = range(18)
+     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT, ORDER_PLACED) = range(19)
 
 
 class TrashBot:
@@ -50,16 +50,19 @@ class TrashBot:
                                       'flat TEXT, '
                                       'phone TEXT, '
                                       'comment TEXT, '
-                                      'last_order TEXT, '
+                                      'cur_service TEXT, '
                                       'status INTEGER NOT NULL, '
                                       'info_filled INTEGER NOT NULL DEFAULT 0'
                                       ');')
         sql_create_order_info_table = ('CREATE TABLE IF NOT EXISTS order_info ('
                                        'id INTEGER PRIMARY KEY, '
                                        'customer_id INTEGER NOT NULL, '
+                                       'customer_username TEXT, '
+                                       'name TEXT, '
                                        'address TEXT, '
                                        'phone TEXT, '
                                        'comment TEXT, '
+                                       'service TEXT, '
                                        'worker_username TEXT, '
                                        'status TEXT default "Обрабатывается");')
 
@@ -199,7 +202,14 @@ class TrashBot:
     def get_user_details(self, chat_id):
         """Get all user details from DB.
 
-        :return: list([str, ...])
+        :return: list([str(name),
+        str(house),
+        str(entrance),
+        str(floor),
+        str(flat),
+        str(phone),
+        str(comment),
+        str(cur_service)])
         """
         cur = self.conn.cursor()
         cur.execute(
@@ -209,7 +219,8 @@ class TrashBot:
             f'floor, '
             f'flat, '
             f'phone, '
-            f'comment '
+            f'comment, '
+            f'cur_service '
             f'FROM user_info WHERE chat_id = {chat_id};')
 
         return cur.fetchone()
@@ -268,7 +279,8 @@ class TrashBot:
             user_status = self.get_user_status(chat_id)[0]
             match user_status:
                 case (Status.STARTED | Status.READY |
-                      Status.READY_NO_COMMENT | Status.SELECT_SERVICE):
+                      Status.WAITING_FOR_PAYMENT | Status.READY_NO_COMMENT |
+                      Status.ORDER_PLACED):
                     sql = (f'UPDATE user_info '
                            f'SET status = {status} '
                            f'WHERE chat_id = {chat_id};')
@@ -338,6 +350,80 @@ class TrashBot:
                            f'SET status = {status}, '
                            f'flat = "{kwargs["flat"]}" '
                            f'WHERE chat_id = {chat_id};')
+                case Status.SELECT_SERVICE:
+                    sql = (f'UPDATE user_info '
+                           f'SET status = {status}, '
+                           f'cur_service = "{kwargs["cur_service"]}" '
+                           f'WHERE chat_id = {chat_id};')
+
+        cur = self.conn.cursor()
+        try:
+            cur.execute(sql)
+        except sqlite3.ProgrammingError:
+            pass
+        self.conn.commit()
+        cur.close()
+
+    def get_order_id(self, chat_id):
+        sql = (f'SELECT id FROM order_info WHERE customer_id = {chat_id} '
+               f'ORDER BY id DESC LIMIT 1;')
+        cur = self.conn.cursor()
+        cur.execute(sql)
+
+        return cur.fetchone()
+
+    def get_order_info(self, order_id):
+        """Get all user details from DB.
+
+        :return:
+        list([int(order_id),
+        int(customer_id),
+        str(customer_username),
+        str(name),
+        str(address),
+        str(phone),
+        str(comment),
+        str(service),
+        str(worker_username),
+        str(status)])
+        """
+        sql = f'SELECT * FROM order_info WHERE id = {order_id};'
+        cur = self.conn.cursor()
+        cur.execute(sql)
+
+        return cur.fetchone()
+
+    def insert_order_info(self, order_id=None,
+                          status=None, **kwargs):
+        sql = ''
+        if order_id is None:
+            sql = (f'INSERT OR IGNORE '
+                   f'INTO '
+                   f'order_info('
+                   f'customer_id, '
+                   f'customer_username, '
+                   f'name, '
+                   f'address, '
+                   f'phone, '
+                   f'comment, '
+                   f'service) '
+                   f'VALUES ({kwargs["customer_id"]}, '
+                   f'"{kwargs["customer_username"]}", '
+                   f'"{kwargs["name"]}", '
+                   f'"{kwargs["address"]}", '
+                   f'"{kwargs["phone"]}", '
+                   f'"{kwargs["comment"]}", '
+                   f'"{kwargs["service"]}"'
+                   f');')
+        elif status == 'Курьер в пути':
+            sql = (f'UPDATE order_info '
+                   f'SET status = {status}, '
+                   f'worker_username = "{kwargs["worker_username"]}" '
+                   f'WHERE id = {order_id};')
+        else:
+            sql = (f'UPDATE order_info '
+                   f'SET status = {status} '
+                   f'WHERE id = {order_id};')
 
         cur = self.conn.cursor()
         try:
@@ -350,21 +436,23 @@ class TrashBot:
     # -------------------- Handlers for workers -------------------------------
 
     async def send_order(self, update: Update,
-                         context: ContextTypes.DEFAULT_TYPE, user_info):
+                         context: ContextTypes.DEFAULT_TYPE,
+                         order_info):
         # pylint: disable=unused-argument
         await context.bot.send_message(chat_id=OWNER_CHAT,
-                                       text='<b>Детали заказа:</b>\n\n'
+                                       text=f'<b>Детали заказа '
+                                            f'#{order_info[0]}:</b>\n\n'
+                                            f'{order_info[7]}\n'
+                                            '<b><i>Контакт:</i></b>\n'
+                                            f'@{order_info[2]}\n'
                                             '<b><i>Имя:</i></b>\n'
-                                            f'{user_info[0]}\n'
+                                            f'{order_info[3]}\n'
                                             '<b><i>Адрес:</i></b>\n'
-                                            f'д.{user_info[1]}, '
-                                            f'под.{user_info[2]}, '
-                                            f'эт.{user_info[3]}, '
-                                            f'кв.{user_info[4]}\n'
+                                            f'{order_info[4]}\n'
                                             '<b><i>Номер телефона:</i></b>\n'
-                                            f'{user_info[5]}\n'
+                                            f'{order_info[5]}\n'
                                             '<b><i>Комментарий:</i></b>\n'
-                                            f'{user_info[6]}',
+                                            f'{order_info[6]}',
                                        parse_mode='HTML'
                                        )
 
@@ -584,30 +672,51 @@ class TrashBot:
     async def process_payment(self, update: Update,
                               context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
+        self.insert_user_info(update.message.chat_id,
+                              status=Status.WAITING_FOR_PAYMENT,
+                              cur_service=update.message.text)
         await update.message.reply_html(
             'ЗДЕСЬ БУДЕТ ОПЛАТА',
             reply_markup=ReplyKeyboardMarkup(
                 [['Оформить заказ']], one_time_keyboard=True
             )
         )
+        self.insert_user_info(update.message.chat_id,
+                              status=Status.ORDER_PLACED)
 
     async def place_order(self, update: Update,
                           context: ContextTypes.DEFAULT_TYPE):
-        """Send order to owner chat, show order details to user."""
+        """Insert order into order_info table,
+        send order to owner chat, show order details to user."""
+
         self.insert_user_info(update.message.chat_id, status=Status.READY)
         user_info = self.get_user_details(update.message.chat_id)
-        await self.send_order(update, context, user_info)
+        self.insert_order_info(customer_id=update.message.chat_id,
+                               customer_username=update.message
+                               .from_user.username,
+                               name=user_info[0],
+                               address=f'д. {user_info[1]}, '
+                                       f'под. {user_info[2]}, '
+                                       f'эт. {user_info[3]}, '
+                                       f'кв. {user_info[4]}',
+                               phone=user_info[5],
+                               comment=user_info[6],
+                               service=user_info[7])
+        order_id = self.get_order_id(update.message.chat_id)[0]
+        order_info = self.get_order_info(order_id)
+        await self.send_order(update, context, order_info)
         await update.message.reply_html(
-            '<b>Детали заказа:</b>\n\n'
+            f'<b>Детали заказа '
+            f'#{order_info[0]}:</b>\n\n'
+            f'{order_info[7]}\n'
             '<b><i>Имя:</i></b>\n'
-            f'{user_info[0]}\n'
+            f'{order_info[3]}\n'
             '<b><i>Адрес:</i></b>\n'
-            f'д.{user_info[1]}, под.{user_info[2]}, '
-            f'эт.{user_info[3]}, кв.{user_info[4]}\n'
+            f'{order_info[4]}\n'
             '<b><i>Номер телефона:</i></b>\n'
-            f'{user_info[5]}\n'
+            f'{order_info[5]}\n'
             '<b><i>Комментарий:</i></b>\n'
-            f'{user_info[6]}\n\n'
+            f'{order_info[6]}\n\n'
             'В ближайшее время с вами свяжется наш сотрудник.\n'
             'Спасибо, что выбрали нас!',
             reply_markup=ReplyKeyboardMarkup(
