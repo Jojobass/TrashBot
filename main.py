@@ -1,6 +1,7 @@
 """imports: telegram & telegram.ext are from python-telegram-bot"""
 import logging
 import sqlite3
+import re
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import filters, MessageHandler, ApplicationBuilder, \
     CommandHandler, ContextTypes
@@ -8,6 +9,7 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, \
 TOKEN = '5025597859:AAEWXRIIXFHWLeC7kCZThTzokzZigK2d2Uc'
 OWNER_CHAT = -801906112
 OWNER_USERNAME = '@Jojobasc'
+BOT_NAME = '@Malakhov_BKIT_bot'
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -134,16 +136,11 @@ class TrashBot:
                           '3-5 пакетов +3 бутылки [225₽]']),
             self.process_payment)
 
-        class TwoEntities(filters.MessageFilter):
-            def filter(self, message):
-                return len(message.parse_entities()) == 2
-
-        # Remember to initialize the class.
-        two_entities = TwoEntities()
-
+        # pylint: disable=consider-using-f-string
         delegate_order_handler = MessageHandler(
-            (filters.TEXT & filters.Entity('mention') &
-             two_entities &
+            (filters.TEXT &
+             filters.Regex(re.compile('^{BOT_NAME} [0-9]+ @[A-Za-z0-9_]+'
+                                      .format(BOT_NAME=BOT_NAME))) &
              filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
              filters.User(username=OWNER_USERNAME, allow_empty=True)),
             self.delegate_order)
@@ -459,7 +456,9 @@ class TrashBot:
     async def delegate_order(self, update: Update,
                              context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        print(update.message)
+        print(update.message.parse_entities())
+        print(list(update.message.parse_entities()))
+        print(type(update.message.parse_entities()))
         pass
 
     # ----------------- Handler for custom input info--------------------------
