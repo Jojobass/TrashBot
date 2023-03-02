@@ -98,7 +98,7 @@ class TrashBot:
                                        filters=filters.ChatType.PRIVATE)
         check_details_handler = MessageHandler(
             filters.ChatType.PRIVATE &
-            filters.Text(['Вынести мусор', 'Детали заказа']),
+            filters.Text(['Вынести мусор', 'Детали заказа', 'Назад']),
             self.check_details)
         text_handler = MessageHandler(
             (filters.TEXT &
