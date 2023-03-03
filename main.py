@@ -2,9 +2,21 @@
 import logging
 import sqlite3
 import re
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import filters, MessageHandler, ApplicationBuilder, \
-    CommandHandler, ContextTypes
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    error
+)
+from telegram.ext import (
+    filters,
+    MessageHandler,
+    CallbackQueryHandler,
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes
+)
 
 TOKEN = '5025597859:AAEWXRIIXFHWLeC7kCZThTzokzZigK2d2Uc'
 OWNER_CHAT = -801906112
@@ -25,6 +37,12 @@ class Status:
      EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
      READY, SELECT_SERVICE, WAITING_FOR_PAYMENT, ORDER_PLACED) = range(19)
 
+
+class OrderStatus:
+    PROCESSING = 'Заказ обрабатывается'
+    ACCEPTED = 'Курьер принял ваш заказ'
+    EN_ROUTE = 'Курьер в пути'
+    DONE = 'Заказ выполнен'
 
 class TrashBot:
     """Telegram bot application & DB handler"""
@@ -66,7 +84,8 @@ class TrashBot:
                                        'comment TEXT, '
                                        'service TEXT, '
                                        'worker_username TEXT, '
-                                       'status TEXT default "Обрабатывается");')
+                                       'status TEXT '
+                                       f'default "{OrderStatus.PROCESSING}");')
 
         # create a database connection
         self.conn = self.create_connection(database)
@@ -93,7 +112,6 @@ class TrashBot:
 
     def build_app(self):
         self.application = ApplicationBuilder().token(TOKEN).build()
-
         start_handler = CommandHandler('start', self.start,
                                        filters=filters.ChatType.PRIVATE)
         check_details_handler = MessageHandler(
@@ -144,6 +162,11 @@ class TrashBot:
              filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
              filters.User(username=OWNER_USERNAME, allow_empty=True)),
             self.delegate_order)
+        update_order_status_handler = CallbackQueryHandler(
+            self.update_order_status,
+            pattern=f'[0-9]+ ({OrderStatus.EN_ROUTE})|'
+                    f'[0-9]+ ({OrderStatus.DONE})'
+        )
 
         self.application.add_handler(start_handler)
         self.application.add_handler(check_details_handler)
@@ -156,6 +179,7 @@ class TrashBot:
         self.application.add_handler(select_service_handler)
         self.application.add_handler(process_payment_handler)
         self.application.add_handler(delegate_order_handler)
+        self.application.add_handler(update_order_status_handler)
 
         # Other handlers
         unknown_handler = MessageHandler(filters.ChatType.PRIVATE &
@@ -247,7 +271,7 @@ class TrashBot:
     def get_user_by_username(self, username):
         cur = self.conn.cursor()
         cur.execute(f'SELECT chat_id '
-                    f'FROM user_info WHERE username = {username[1:]};')
+                    f'FROM user_info WHERE username = "{username[1:]}";')
 
         return cur.fetchone()
 
@@ -369,6 +393,21 @@ class TrashBot:
 
         return cur.fetchone()
 
+    def check_order_pending(self, order_id):
+        sql = f'SELECT status FROM order_info WHERE id = {order_id};'
+        cur = self.conn.cursor()
+        cur.execute(sql)
+
+        status = cur.fetchone()
+        return (status is not None) and (status[0] == OrderStatus.PROCESSING)
+
+    def get_customer_id(self, order_id):
+        sql = f'SELECT customer_id FROM order_info WHERE id = {order_id};'
+        cur = self.conn.cursor()
+        cur.execute(sql)
+
+        return cur.fetchone()
+
     def get_order_info(self, order_id):
         """Get all user details from DB.
 
@@ -412,14 +451,14 @@ class TrashBot:
                    f'"{kwargs["comment"]}", '
                    f'"{kwargs["service"]}"'
                    f');')
-        elif status == 'Курьер в пути':
+        elif status == OrderStatus.ACCEPTED:
             sql = (f'UPDATE order_info '
-                   f'SET status = {status}, '
+                   f'SET status = "{status}", '
                    f'worker_username = "{kwargs["worker_username"]}" '
                    f'WHERE id = {order_id};')
         else:
             sql = (f'UPDATE order_info '
-                   f'SET status = {status} '
+                   f'SET status = "{status}" '
                    f'WHERE id = {order_id};')
 
         cur = self.conn.cursor()
@@ -456,10 +495,118 @@ class TrashBot:
     async def delegate_order(self, update: Update,
                              context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        print(update.message.parse_entities())
-        print(list(update.message.parse_entities()))
-        print(type(update.message.parse_entities()))
-        pass
+        rematch = re.search(r'([0-9]+) (@[A-Za-z0-9_]+)', update.message.text)
+        order_id = rematch.group(1)
+        worker_username = rematch.group(2)
+        if not self.check_order_pending(order_id):
+            await update.message.reply_html(
+                f'Заказ <i>#{order_id}</i> не найден, '
+                f'либо исполнитель уже был присвоен!'
+            )
+        else:
+            try:
+                await self.send_order_to_worker(update, context, order_id,
+                                                worker_username)
+            except error.BadRequest:
+                pass
+            else:
+                await update.message.reply_html(
+                    f'Для заказа <i>#{order_id}</i> '
+                    f'присвоен исполнитель: {worker_username}',
+                )
+
+    async def send_order_to_worker(self, update: Update,
+                                   context: ContextTypes.DEFAULT_TYPE,
+                                   order_id, worker_username):
+        order_info = self.get_order_info(order_id)
+        worker_id = self.get_user_by_username(worker_username)
+        if worker_id is None:
+            await update.message.reply_html(
+                f'Исполнитель {worker_username} не начал беседу с ботом!'
+            )
+            return
+        inline_keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton('Уже в пути',
+                                      callback_data=f'{order_id} '
+                                                    f'{OrderStatus.EN_ROUTE}')]
+            ]
+        )
+        try:
+            await context.bot.send_message(chat_id=worker_id[0],
+                                           text=f'<b>Детали заказа '
+                                                f'#{order_info[0]}:</b>\n\n'
+                                                f'{order_info[7]}\n'
+                                                '<b><i>Контакт:</i></b>\n'
+                                                f'@{order_info[2]}\n'
+                                                '<b><i>Имя:</i></b>\n'
+                                                f'{order_info[3]}\n'
+                                                '<b><i>Адрес:</i></b>\n'
+                                                f'{order_info[4]}\n'
+                                                '<b><i>Номер телефона:'
+                                                '</i></b>\n'
+                                                f'{order_info[5]}\n'
+                                                '<b><i>Комментарий:</i></b>\n'
+                                                f'{order_info[6]}',
+                                           parse_mode='HTML',
+                                           reply_markup=inline_keyboard
+                                           )
+        except error.BadRequest as e:
+            await update.message.reply_html(
+                f'Ошибка! Возможно, исполнитель {worker_username}'
+                f' не начал беседу с ботом!'
+            )
+            raise e
+        else:
+            self.insert_order_info(order_id,
+                                   status=OrderStatus.ACCEPTED,
+                                   worker_username=worker_username)
+            try:
+                print(f'Trying to send status to customer, id={order_info[1]}')
+                await context.bot.send_message(chat_id=order_info[1],
+                                               text=f'Статус заказа '
+                                                    f'<i>#{order_id}</i>:\n'
+                                                    f'<b>'
+                                                    f'{OrderStatus.ACCEPTED}'
+                                                    f'</b>',
+                                               parse_mode='HTML')
+            except error.BadRequest:
+                print(
+                    f'Error! '
+                    f'Cannot send status to customer, id={order_info[1]}')
+
+    async def update_order_status(self, update: Update,
+                                  context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        rematch = re.search(r'([0-9]+) (.+)', query.data)
+        order_id = rematch.group(1)
+        new_status = rematch.group(2)
+        # print(f'Status:{new_status}')
+        self.insert_order_info(order_id, status=new_status)
+        customer_id = self.get_customer_id(order_id)[0]
+        try:
+            print(f'Trying to send status to customer, id={customer_id}')
+            await context.bot.send_message(chat_id=customer_id,
+                                           text=f'Статус заказа '
+                                                f'<i>#{order_id}</i>:\n'
+                                                f'<b>{new_status}</b>',
+                                           parse_mode='HTML')
+        except error.BadRequest:
+            print(f'Error! Cannot send status to customer, id={customer_id}')
+        if new_status == OrderStatus.EN_ROUTE:
+            inline_keyboard = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton('Выполнено',
+                                          callback_data=f'{order_id} '
+                                                        f'{OrderStatus.DONE}')]
+                ]
+            )
+            await query.edit_message_reply_markup(reply_markup=inline_keyboard)
+        elif new_status == OrderStatus.DONE:
+            await query.edit_message_text(
+                text=query.message.text + '\n\n✅Выполнено'
+            )
 
     # ----------------- Handler for custom input info--------------------------
 
