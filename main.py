@@ -86,7 +86,8 @@ class TrashBot:
                                        'service TEXT, '
                                        'worker_username TEXT, '
                                        'status TEXT '
-                                       f'default "{OrderStatus.PROCESSING}");')
+                                       f'default "{OrderStatus.PROCESSING}", '
+                                       'order_datetime INTEGER);')
 
         # create a database connection
         self.conn = self.create_connection(database)
@@ -427,9 +428,22 @@ class TrashBot:
         str(comment),
         str(service),
         str(worker_username),
-        str(status)])
+        str(status),
+        str(order_datetime)])
         """
-        sql = f'SELECT * FROM order_info WHERE id = {order_id};'
+        sql = ('SELECT '
+               'id, '
+               'customer_id, '
+               'customer_username, '
+               'name, '
+               'address, '
+               'phone, '
+               'comment, '
+               'service, '
+               'worker_username, '
+               'status, '
+               'datetime(order_datetime, "unixepoch", "+3 hours") '
+               f'FROM order_info WHERE id = {order_id};')
         cur = self.conn.cursor()
         cur.execute(sql)
 
@@ -439,24 +453,26 @@ class TrashBot:
                           status=None, **kwargs):
         sql = ''
         if order_id is None:
-            sql = (f'INSERT OR IGNORE '
-                   f'INTO '
-                   f'order_info('
-                   f'customer_id, '
-                   f'customer_username, '
-                   f'name, '
-                   f'address, '
-                   f'phone, '
-                   f'comment, '
-                   f'service) '
+            sql = ('INSERT OR IGNORE '
+                   'INTO '
+                   'order_info('
+                   'customer_id, '
+                   'customer_username, '
+                   'name, '
+                   'address, '
+                   'phone, '
+                   'comment, '
+                   'service,'
+                   'order_datetime) '
                    f'VALUES ({kwargs["customer_id"]}, '
                    f'"{kwargs["customer_username"]}", '
                    f'"{kwargs["name"]}", '
                    f'"{kwargs["address"]}", '
                    f'"{kwargs["phone"]}", '
                    f'"{kwargs["comment"]}", '
-                   f'"{kwargs["service"]}"'
-                   f');')
+                   f'"{kwargs["service"]}", '
+                   '(strftime("%s","now"))'
+                   ');')
         elif status == OrderStatus.ACCEPTED:
             sql = (f'UPDATE order_info '
                    f'SET status = "{status}", '
@@ -494,7 +510,9 @@ class TrashBot:
                                             '<b><i>Номер телефона:</i></b>\n'
                                             f'{order_info[5]}\n'
                                             '<b><i>Комментарий:</i></b>\n'
-                                            f'{order_info[6]}',
+                                            f'{order_info[6]}\n'
+                                            '<b><i>Дата/время заказа:</i></b>\n'
+                                            f'{order_info[10]}',
                                        parse_mode='HTML'
                                        )
 
@@ -553,7 +571,11 @@ class TrashBot:
                                                 '</i></b>\n'
                                                 f'{order_info[5]}\n'
                                                 '<b><i>Комментарий:</i></b>\n'
-                                                f'{order_info[6]}',
+                                                f'{order_info[6]}\n'
+                                                '<b><i>'
+                                                'Дата/время заказа:'
+                                                '</i></b>\n'
+                                                f'{order_info[10]}',
                                            parse_mode='HTML',
                                            reply_markup=inline_keyboard
                                            )
@@ -944,7 +966,9 @@ class TrashBot:
             '<b><i>Номер телефона:</i></b>\n'
             f'{order_info[5]}\n'
             '<b><i>Комментарий:</i></b>\n'
-            f'{order_info[6]}\n\n'
+            f'{order_info[6]}\n'
+            '<b><i>Дата/время заказа:</i></b>\n'
+            f'{order_info[10]}\n\n',
             'Заказ уже обрабатывается, '
             'через несколько минут пришлем обновление статуса😉',
             reply_markup=ReplyKeyboardMarkup(
