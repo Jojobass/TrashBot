@@ -21,6 +21,7 @@ from telegram.ext import (
 TOKEN = '5025597859:AAEWXRIIXFHWLeC7kCZThTzokzZigK2d2Uc'
 OWNER_CHAT = -801906112
 OWNER_USERNAME = '@Jojobasc'
+OWNER_CARD = '#### #### #### ####'
 BOT_NAME = '@Malakhov_BKIT_bot'
 
 logging.basicConfig(
@@ -942,8 +943,25 @@ class TrashBot:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.WAITING_FOR_PAYMENT,
                                   cur_service=update.message.text)
-            await update.message.reply_html(
-                'ЗДЕСЬ БУДЕТ ОПЛАТА',
+            user_info = self.get_user_details(update.message.chat_id)
+            self.insert_order_info(customer_id=update.message.chat_id,
+                                   customer_username=update.message
+                                   .from_user.username,
+                                   name=user_info[0],
+                                   address=f'д. {user_info[1]}, '
+                                           f'под. {user_info[2]}, '
+                                           f'эт. {user_info[3]}, '
+                                           f'кв. {user_info[4]}',
+                                   phone=user_info[5],
+                                   comment=user_info[6],
+                                   service=user_info[7])
+            order_id = self.get_order_id(update.message.chat_id)[0]
+            await update.message.reply_markdown(
+                'Для того, чтобы мы приняли ваш заказ, '
+                'переведите соответствующую сумму на\n'
+                f'`{OWNER_CARD}`\n'
+                f'с номером заказа `#{order_id}` в сообщении,\n'
+                'затем нажмите на кнопку "Оформить заказ"',
                 reply_markup=ReplyKeyboardMarkup(
                     [['Оформить заказ']], one_time_keyboard=True
                 )
@@ -958,18 +976,6 @@ class TrashBot:
         send order to owner chat, show order details to user."""
 
         self.insert_user_info(update.message.chat_id, status=Status.READY)
-        user_info = self.get_user_details(update.message.chat_id)
-        self.insert_order_info(customer_id=update.message.chat_id,
-                               customer_username=update.message
-                               .from_user.username,
-                               name=user_info[0],
-                               address=f'д. {user_info[1]}, '
-                                       f'под. {user_info[2]}, '
-                                       f'эт. {user_info[3]}, '
-                                       f'кв. {user_info[4]}',
-                               phone=user_info[5],
-                               comment=user_info[6],
-                               service=user_info[7])
         order_id = self.get_order_id(update.message.chat_id)[0]
         order_info = self.get_order_info(order_id)
         await self.send_order(update, context, order_info)
@@ -986,7 +992,7 @@ class TrashBot:
             '<b><i>Комментарий:</i></b>\n'
             f'{order_info[6]}\n'
             '<b><i>Дата/время заказа:</i></b>\n'
-            f'{order_info[10]}\n\n',
+            f'{order_info[10]}\n\n'
             'Заказ уже обрабатывается, '
             'через несколько минут пришлем обновление статуса😉',
             reply_markup=ReplyKeyboardMarkup(
