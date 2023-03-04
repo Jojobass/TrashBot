@@ -112,12 +112,16 @@ class TrashBot:
                     '1 Пакет +1 бутылка [100₽]',
                     '2 Пакета +2 бутылки [150₽]',
                     '3-5 пакетов +3 бутылки [225₽]',
-                    'Назад']
+                    'Назад',
+                    'Поддержка']
 
     def build_app(self):
         self.application = ApplicationBuilder().token(TOKEN).build()
         start_handler = CommandHandler('start', self.start,
                                        filters=filters.ChatType.PRIVATE)
+        show_support_handler = MessageHandler(
+            filters.ChatType.PRIVATE & filters.Text(['Поддержка']),
+            self.show_support)
         check_details_handler = MessageHandler(
             filters.ChatType.PRIVATE &
             filters.Text(['Вынести мусор', 'Детали заказа', 'Назад']),
@@ -172,6 +176,7 @@ class TrashBot:
                     f'[0-9]+ ({OrderStatus.DONE})'
         )
 
+        self.application.add_handler(show_support_handler)
         self.application.add_handler(start_handler)
         self.application.add_handler(check_details_handler)
         self.application.add_handler(text_handler)
@@ -804,10 +809,18 @@ class TrashBot:
                     reply_markup=ReplyKeyboardMarkup(
                         [['Редактировать имя', 'Редактировать адрес'],
                          ['Редактировать номер', 'Редактировать комментарий'],
-                         ['Выбрать услугу']],
-                        one_time_keyboard=True
+                         ['Выбрать услугу'],
+                         ['Поддержка']]
                     )
                 )
+
+    @staticmethod
+    async def show_support(update: Update,
+                           context: ContextTypes.DEFAULT_TYPE):
+        # pylint: disable=unused-argument
+        await update.message.reply_html(
+            f'По всем вопросам пишите {OWNER_USERNAME}'
+        )
 
     async def reset(self, update: Update,
                     context: ContextTypes.DEFAULT_TYPE, no_info=False):
