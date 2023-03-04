@@ -568,7 +568,6 @@ class TrashBot:
                                    status=OrderStatus.ACCEPTED,
                                    worker_username=worker_username)
             try:
-                print(f'Trying to send status to customer, id={order_info[1]}')
                 await context.bot.send_message(chat_id=order_info[1],
                                                text=f'Статус заказа '
                                                     f'<i>#{order_id}</i>:\n'
@@ -588,11 +587,9 @@ class TrashBot:
         rematch = re.search(r'([0-9]+) (.+)', query.data)
         order_id = rematch.group(1)
         new_status = rematch.group(2)
-        # print(f'Status:{new_status}')
         self.insert_order_info(order_id, status=new_status)
         customer_id = self.get_customer_id(order_id)[0]
         try:
-            print(f'Trying to send status to customer, id={customer_id}')
             await context.bot.send_message(chat_id=customer_id,
                                            text=f'Статус заказа '
                                                 f'<i>#{order_id}</i>:\n'
@@ -623,99 +620,113 @@ class TrashBot:
         Status is formulated like 'waiting for ...' or 'edit ...',
         which means we need to update corresponding value in DB & status.
         """
-        user_status = self.get_user_status(update.message.chat_id)[0]
-        match user_status:
-            case Status.WAITING_FOR_NAME:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.WAITING_FOR_ADDRESS_HOUSE,
-                                      name=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер дома:</b>'
-                )
-            case Status.WAITING_FOR_ADDRESS_HOUSE:
-                self.insert_user_info(
-                    update.message.chat_id,
-                    status=Status.WAITING_FOR_ADDRESS_ENTRANCE,
-                    house=update.message.text
-                )
-                await update.message.reply_html(
-                    '<b>Введите номер подъезда:</b>'
-                )
-            case Status.WAITING_FOR_ADDRESS_ENTRANCE:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.WAITING_FOR_ADDRESS_FLOOR,
-                                      entrance=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер этажа:</b>'
-                )
-            case Status.WAITING_FOR_ADDRESS_FLOOR:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.WAITING_FOR_ADDRESS_FLAT,
-                                      floor=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер квартиры:</b>'
-                )
-            case Status.WAITING_FOR_ADDRESS_FLAT:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.WAITING_FOR_PHONE,
-                                      flat=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер телефона:</b>'
-                )
-            case Status.WAITING_FOR_PHONE:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY,
-                                      phone=update.message.text)
-                await update.message.reply_html(
-                    '<b>Хотите добавить комментарий?</b>',
-                    reply_markup=ReplyKeyboardMarkup(
-                        [['Добавить комментарий', 'Детали заказа']],
-                        one_time_keyboard=True
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
+            )
+            await self.reset(update, context, cur_status is None)
+        else:
+            user_status = cur_status[0]
+            match user_status:
+                case Status.WAITING_FOR_NAME:
+                    self.insert_user_info(
+                        update.message.chat_id,
+                        status=Status.WAITING_FOR_ADDRESS_HOUSE,
+                        name=update.message.text
                     )
-                )
-            case Status.EDIT_COMMENT:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY,
-                                      comment=update.message.text)
-                await self.check_details(update, context)
-            case Status.EDIT_NAME:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY,
-                                      name=update.message.text)
-                await self.check_details(update, context)
-            case Status.EDIT_ADDRESS_HOUSE:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.EDIT_ADDRESS_ENTRANCE,
-                                      house=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер подъезда:</b>'
-                )
-            case Status.EDIT_ADDRESS_ENTRANCE:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.EDIT_ADDRESS_FLOOR,
-                                      entrance=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер этажа:</b>'
-                )
-            case Status.EDIT_ADDRESS_FLOOR:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.EDIT_ADDRESS_FLAT,
-                                      floor=update.message.text)
-                await update.message.reply_html(
-                    '<b>Введите номер квартиры:</b>'
-                )
-            case Status.EDIT_ADDRESS_FLAT:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY,
-                                      flat=update.message.text)
-                await self.check_details(update, context)
-            case Status.EDIT_PHONE:
-                self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY,
-                                      phone=update.message.text)
-                await self.check_details(update, context)
-            case _:
-                await self.unknown(update, context)
+                    await update.message.reply_html(
+                        '<b>Введите номер дома:</b>'
+                    )
+                case Status.WAITING_FOR_ADDRESS_HOUSE:
+                    self.insert_user_info(
+                        update.message.chat_id,
+                        status=Status.WAITING_FOR_ADDRESS_ENTRANCE,
+                        house=update.message.text
+                    )
+                    await update.message.reply_html(
+                        '<b>Введите номер подъезда:</b>'
+                    )
+                case Status.WAITING_FOR_ADDRESS_ENTRANCE:
+                    self.insert_user_info(
+                        update.message.chat_id,
+                        status=Status.WAITING_FOR_ADDRESS_FLOOR,
+                        entrance=update.message.text
+                    )
+                    await update.message.reply_html(
+                        '<b>Введите номер этажа:</b>'
+                    )
+                case Status.WAITING_FOR_ADDRESS_FLOOR:
+                    self.insert_user_info(
+                        update.message.chat_id,
+                        status=Status.WAITING_FOR_ADDRESS_FLAT,
+                        floor=update.message.text
+                    )
+                    await update.message.reply_html(
+                        '<b>Введите номер квартиры:</b>'
+                    )
+                case Status.WAITING_FOR_ADDRESS_FLAT:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.WAITING_FOR_PHONE,
+                                          flat=update.message.text)
+                    await update.message.reply_html(
+                        '<b>Введите номер телефона:</b>'
+                    )
+                case Status.WAITING_FOR_PHONE:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.READY,
+                                          phone=update.message.text)
+                    await update.message.reply_html(
+                        '<b>Хотите добавить комментарий?</b>',
+                        reply_markup=ReplyKeyboardMarkup(
+                            [['Добавить комментарий', 'Детали заказа']],
+                            one_time_keyboard=True
+                        )
+                    )
+                case Status.EDIT_COMMENT:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.READY,
+                                          comment=update.message.text)
+                    await self.check_details(update, context)
+                case Status.EDIT_NAME:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.READY,
+                                          name=update.message.text)
+                    await self.check_details(update, context)
+                case Status.EDIT_ADDRESS_HOUSE:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.EDIT_ADDRESS_ENTRANCE,
+                                          house=update.message.text)
+                    await update.message.reply_html(
+                        '<b>Введите номер подъезда:</b>'
+                    )
+                case Status.EDIT_ADDRESS_ENTRANCE:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.EDIT_ADDRESS_FLOOR,
+                                          entrance=update.message.text)
+                    await update.message.reply_html(
+                        '<b>Введите номер этажа:</b>'
+                    )
+                case Status.EDIT_ADDRESS_FLOOR:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.EDIT_ADDRESS_FLAT,
+                                          floor=update.message.text)
+                    await update.message.reply_html(
+                        '<b>Введите номер квартиры:</b>'
+                    )
+                case Status.EDIT_ADDRESS_FLAT:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.READY,
+                                          flat=update.message.text)
+                    await self.check_details(update, context)
+                case Status.EDIT_PHONE:
+                    self.insert_user_info(update.message.chat_id,
+                                          status=Status.READY,
+                                          phone=update.message.text)
+                    await self.check_details(update, context)
+                case _:
+                    await self.unknown(update, context)
 
     # --------------------------- Handlers ------------------------------------
 
@@ -744,103 +755,162 @@ class TrashBot:
         So if it's 0, gotta fill the details.
         Else, show all details to user, who can edit them or order.
         """
-        user_info = self.get_user_details(update.message.chat_id)
-        user_filled = self.user_info_filled(update.message.chat_id)[0]
-        if not user_filled:
-            self.insert_user_info(update.message.chat_id,
-                                  status=Status.WAITING_FOR_NAME)
-            await update.message.reply_html(
-                '<b>Введите Имя:</b>'
-            )
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await self.reset(update, context, cur_status is None)
         else:
-            await update.message.reply_html(
-                '<b>Сохраненные данные:</b>\n\n'
-                '<b><i>Имя:</i></b>\n'
-                f'{user_info[0]}\n'
-                '<b><i>Адрес:</i></b>\n'
-                f'д. {user_info[1]}, под. {user_info[2]}, '
-                f'эт. {user_info[3]}, кв. {user_info[4]}\n'
-                '<b><i>Номер телефона:</i></b>\n'
-                f'{user_info[5]}\n'
-                '<b><i>Комментарий:</i></b>\n'
-                f'{user_info[6]}',
-                reply_markup=ReplyKeyboardMarkup(
-                    [['Редактировать имя', 'Редактировать адрес'],
-                     ['Редактировать номер', 'Редактировать комментарий'],
-                     ['Выбрать услугу']],
-                    one_time_keyboard=True
+            user_info = self.get_user_details(update.message.chat_id)
+            user_filled = self.user_info_filled(update.message.chat_id)[0]
+            if not user_filled:
+                self.insert_user_info(update.message.chat_id,
+                                      status=Status.WAITING_FOR_NAME)
+                await update.message.reply_html(
+                    '<b>Введите Имя:</b>'
                 )
-            )
+            else:
+                await update.message.reply_html(
+                    '<b>Сохраненные данные:</b>\n\n'
+                    '<b><i>Имя:</i></b>\n'
+                    f'{user_info[0]}\n'
+                    '<b><i>Адрес:</i></b>\n'
+                    f'д. {user_info[1]}, под. {user_info[2]}, '
+                    f'эт. {user_info[3]}, кв. {user_info[4]}\n'
+                    '<b><i>Номер телефона:</i></b>\n'
+                    f'{user_info[5]}\n'
+                    '<b><i>Комментарий:</i></b>\n'
+                    f'{user_info[6]}',
+                    reply_markup=ReplyKeyboardMarkup(
+                        [['Редактировать имя', 'Редактировать адрес'],
+                         ['Редактировать номер', 'Редактировать комментарий'],
+                         ['Выбрать услугу']],
+                        one_time_keyboard=True
+                    )
+                )
 
     async def reset(self, update: Update,
-                    context: ContextTypes.DEFAULT_TYPE):
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.READY)
+                    context: ContextTypes.DEFAULT_TYPE, no_info=False):
+        if no_info:
+            self.insert_user_info(update.message.chat_id,
+                                  username=update.message.chat.username)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.READY)
         await self.check_details(update, context)
 
     async def edit_comment(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.EDIT_COMMENT)
-        await update.message.reply_html(
-            '<b>Введите комментарий:</b>'
-        )
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
+            )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.EDIT_COMMENT)
+            await update.message.reply_html(
+                '<b>Введите комментарий:</b>'
+            )
 
     async def edit_name(self, update: Update,
                         context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id, status=Status.EDIT_NAME)
-        await update.message.reply_html(
-            '<b>Введите Имя:</b>'
-        )
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
+            )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.EDIT_NAME)
+            await update.message.reply_html(
+                '<b>Введите Имя:</b>'
+            )
 
     async def edit_address(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.EDIT_ADDRESS_HOUSE)
-        await update.message.reply_html(
-            '<b>Введите номер дома:</b>'
-        )
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
+            )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.EDIT_ADDRESS_HOUSE)
+            await update.message.reply_html(
+                '<b>Введите номер дома:</b>'
+            )
 
     async def edit_phone(self, update: Update,
                          context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id, status=Status.EDIT_PHONE)
-        await update.message.reply_html(
-            '<b>Введите номер телефона:</b>'
-        )
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
+            )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.EDIT_PHONE)
+            await update.message.reply_html(
+                '<b>Введите номер телефона:</b>'
+            )
 
     async def select_service(self, update: Update,
                              context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.SELECT_SERVICE)
-        await update.message.reply_html(
-            '<b>Выберите услугу:</b>',
-            reply_markup=ReplyKeyboardMarkup(
-                [['1 Пакет +1 бутылка [100₽]'],
-                 ['2 Пакета +2 бутылки [150₽]'],
-                 ['3-5 пакетов +3 бутылки [225₽]'],
-                 ['Назад']], one_time_keyboard=True
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.READY:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
             )
-        )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.SELECT_SERVICE)
+            await update.message.reply_html(
+                '<b>Выберите услугу:</b>',
+                reply_markup=ReplyKeyboardMarkup(
+                    [['1 Пакет +1 бутылка [100₽]'],
+                     ['2 Пакета +2 бутылки [150₽]'],
+                     ['3-5 пакетов +3 бутылки [225₽]'],
+                     ['Назад']], one_time_keyboard=True
+                )
+            )
 
     async def process_payment(self, update: Update,
                               context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.WAITING_FOR_PAYMENT,
-                              cur_service=update.message.text)
-        await update.message.reply_html(
-            'ЗДЕСЬ БУДЕТ ОПЛАТА',
-            reply_markup=ReplyKeyboardMarkup(
-                [['Оформить заказ']], one_time_keyboard=True
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.SELECT_SERVICE:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
             )
-        )
-        self.insert_user_info(update.message.chat_id,
-                              status=Status.ORDER_PLACED)
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.WAITING_FOR_PAYMENT,
+                                  cur_service=update.message.text)
+            await update.message.reply_html(
+                'ЗДЕСЬ БУДЕТ ОПЛАТА',
+                reply_markup=ReplyKeyboardMarkup(
+                    [['Оформить заказ']], one_time_keyboard=True
+                )
+            )
+            # после того как оплата пройдет, нужно вызвать place_order
+            self.insert_user_info(update.message.chat_id,
+                                  status=Status.ORDER_PLACED)
 
     async def place_order(self, update: Update,
                           context: ContextTypes.DEFAULT_TYPE):
