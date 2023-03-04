@@ -229,6 +229,8 @@ class TrashBot:
         except sqlite3.Error as e:
             print(e)
 
+    # --------- user_info methods ---------------
+
     def get_user_details(self, chat_id):
         """Get all user details from DB.
 
@@ -397,6 +399,8 @@ class TrashBot:
         self.conn.commit()
         cur.close()
 
+    # --------- order_info methods ---------------
+
     def get_order_id(self, chat_id):
         sql = (f'SELECT id FROM order_info WHERE customer_id = {chat_id} '
                f'ORDER BY id DESC LIMIT 1;')
@@ -498,7 +502,8 @@ class TrashBot:
 
     # -------------------- Handlers for workers -------------------------------
 
-    async def send_order(self, update: Update,
+    @staticmethod
+    async def send_order(update: Update,
                          context: ContextTypes.DEFAULT_TYPE,
                          order_info):
         # pylint: disable=unused-argument
@@ -776,7 +781,7 @@ class TrashBot:
     async def check_details(self, update: Update,
                             context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        """Check user details if filled.
+        """Show user details if filled.
 
         Column info_filled is set to 1 after first filling the user details.
         So if it's 0, gotta fill the details.
