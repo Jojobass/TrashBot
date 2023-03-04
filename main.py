@@ -33,9 +33,9 @@ class Status:
     (STARTED, WAITING_FOR_NAME, WAITING_FOR_ADDRESS_HOUSE,
      WAITING_FOR_ADDRESS_ENTRANCE, WAITING_FOR_ADDRESS_FLOOR,
      WAITING_FOR_ADDRESS_FLAT, WAITING_FOR_PHONE,
-     READY_NO_COMMENT, EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
+     EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
      EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
-     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT, ORDER_PLACED) = range(19)
+     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT, ORDER_PLACED) = range(18)
 
 
 class OrderStatus:
@@ -43,6 +43,7 @@ class OrderStatus:
     ACCEPTED = 'Курьер принял ваш заказ'
     EN_ROUTE = 'Курьер в пути'
     DONE = 'Заказ выполнен'
+
 
 class TrashBot:
     """Telegram bot application & DB handler"""
@@ -100,6 +101,7 @@ class TrashBot:
 
     ALL_KEYWORDS = ['Вынести мусор',
                     'Редактировать комментарий',
+                    'Добавить комментарий',
                     'Оформить заказ',
                     'Детали заказа',
                     'Редактировать имя',
@@ -108,7 +110,8 @@ class TrashBot:
                     'Выбрать услугу',
                     '1 Пакет +1 бутылка [100₽]',
                     '2 Пакета +2 бутылки [150₽]',
-                    '3-5 пакетов +3 бутылки [225₽]']
+                    '3-5 пакетов +3 бутылки [225₽]',
+                    'Назад']
 
     def build_app(self):
         self.application = ApplicationBuilder().token(TOKEN).build()
@@ -125,7 +128,7 @@ class TrashBot:
             self.process_text)
         add_comment_handler = MessageHandler(
             filters.ChatType.PRIVATE &
-            filters.Text(['Редактировать комментарий']),
+            filters.Text(['Редактировать комментарий', 'Добавить комментарий']),
             self.edit_comment)
         place_order_handler = MessageHandler(
             filters.ChatType.PRIVATE &
@@ -279,7 +282,7 @@ class TrashBot:
         """Updates DB based on user status in DB.
 
         If it's a first-time user inserts into DB.
-        If DB status is STARTED, READY or READY_NO_COMMENT only updates status.
+        If DB status is STARTED, READY only updates status.
         Else updates corresponding value and status.
         """
         sql = ''
@@ -296,12 +299,15 @@ class TrashBot:
                 sql = (f'UPDATE user_info '
                        f'SET status = {status} '
                        f'WHERE chat_id = {chat_id};')
+        elif status == Status.READY and len(kwargs) == 0:
+            sql = (f'UPDATE user_info '
+                   f'SET status = {status} '
+                   f'WHERE chat_id = {chat_id};')
         else:
             user_status = self.get_user_status(chat_id)[0]
             match user_status:
                 case (Status.STARTED | Status.READY |
-                      Status.WAITING_FOR_PAYMENT | Status.READY_NO_COMMENT |
-                      Status.ORDER_PLACED):
+                      Status.WAITING_FOR_PAYMENT | Status.ORDER_PLACED):
                     sql = (f'UPDATE user_info '
                            f'SET status = {status} '
                            f'WHERE chat_id = {chat_id};')
@@ -658,12 +664,12 @@ class TrashBot:
                 )
             case Status.WAITING_FOR_PHONE:
                 self.insert_user_info(update.message.chat_id,
-                                      status=Status.READY_NO_COMMENT,
+                                      status=Status.READY,
                                       phone=update.message.text)
                 await update.message.reply_html(
                     '<b>Хотите добавить комментарий?</b>',
                     reply_markup=ReplyKeyboardMarkup(
-                        [['Редактировать комментарий', 'Детали заказа']],
+                        [['Добавить комментарий', 'Детали заказа']],
                         one_time_keyboard=True
                     )
                 )
@@ -752,8 +758,8 @@ class TrashBot:
                 '<b><i>Имя:</i></b>\n'
                 f'{user_info[0]}\n'
                 '<b><i>Адрес:</i></b>\n'
-                f'{user_info[1]}, {user_info[2]}, '
-                f'{user_info[3]}, {user_info[4]}\n'
+                f'д. {user_info[1]}, под. {user_info[2]}, '
+                f'эт. {user_info[3]}, кв. {user_info[4]}\n'
                 '<b><i>Номер телефона:</i></b>\n'
                 f'{user_info[5]}\n'
                 '<b><i>Комментарий:</i></b>\n'
@@ -765,6 +771,12 @@ class TrashBot:
                     one_time_keyboard=True
                 )
             )
+
+    async def reset(self, update: Update,
+                    context: ContextTypes.DEFAULT_TYPE):
+        self.insert_user_info(update.message.chat_id,
+                              status=Status.READY)
+        await self.check_details(update, context)
 
     async def edit_comment(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
@@ -863,8 +875,8 @@ class TrashBot:
             f'{order_info[5]}\n'
             '<b><i>Комментарий:</i></b>\n'
             f'{order_info[6]}\n\n'
-            'В ближайшее время с вами свяжется наш сотрудник.\n'
-            'Спасибо, что выбрали нас!',
+            'Заказ уже обрабатывается, '
+            'через несколько минут пришлем обновление статуса😉',
             reply_markup=ReplyKeyboardMarkup(
                 [['Вынести мусор']], one_time_keyboard=True
             )
