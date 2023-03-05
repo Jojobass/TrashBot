@@ -22,6 +22,7 @@ TOKEN = '5025597859:AAEWXRIIXFHWLeC7kCZThTzokzZigK2d2Uc'
 OWNER_CHAT = -801906112
 OWNER_USERNAME = '@Jojobasc'
 OWNER_CARD = '#### #### #### ####'
+OWNER_NAME = 'Иванов Иван Иванович'
 BOT_NAME = '@Malakhov_BKIT_bot'
 
 logging.basicConfig(
@@ -36,7 +37,7 @@ class Status:
      WAITING_FOR_ADDRESS_FLAT, WAITING_FOR_PHONE,
      EDIT_NAME, EDIT_ADDRESS_HOUSE, EDIT_ADDRESS_ENTRANCE,
      EDIT_ADDRESS_FLOOR, EDIT_ADDRESS_FLAT, EDIT_PHONE, EDIT_COMMENT,
-     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT, ORDER_PLACED) = range(18)
+     READY, SELECT_SERVICE, WAITING_FOR_PAYMENT) = range(17)
 
 
 class OrderStatus:
@@ -105,7 +106,6 @@ class TrashBot:
     ALL_KEYWORDS = ['Вынести мусор',
                     'Редактировать комментарий',
                     'Добавить комментарий',
-                    'Оформить заказ',
                     'Детали заказа',
                     'Редактировать имя',
                     'Редактировать адрес',
@@ -141,10 +141,6 @@ class TrashBot:
             filters.ChatType.PRIVATE &
             filters.Text(['Редактировать комментарий', 'Добавить комментарий']),
             self.edit_comment)
-        place_order_handler = MessageHandler(
-            filters.ChatType.PRIVATE &
-            filters.Text(['Оформить заказ']),
-            self.place_order)
         edit_name_handler = MessageHandler(
             filters.ChatType.PRIVATE &
             filters.Text(['Редактировать имя']),
@@ -161,12 +157,15 @@ class TrashBot:
             filters.ChatType.PRIVATE &
             filters.Text(['Выбрать услугу']),
             self.select_service)
-        process_payment_handler = MessageHandler(
+        request_payment_handler = MessageHandler(
             filters.ChatType.PRIVATE &
             filters.Text(['1 Пакет +1 бутылка [100₽]',
                           '2 Пакета +2 бутылки [150₽]',
                           '3-5 пакетов +3 бутылки [225₽]']),
-            self.process_payment)
+            self.request_payment)
+        place_order_handler = MessageHandler(
+            filters.ChatType.PRIVATE & filters.PHOTO,
+            self.place_order)
 
         # pylint: disable=consider-using-f-string
         assign_order_handler = MessageHandler(
@@ -203,7 +202,7 @@ class TrashBot:
         self.application.add_handler(edit_address_handler)
         self.application.add_handler(edit_phone_handler)
         self.application.add_handler(select_service_handler)
-        self.application.add_handler(process_payment_handler)
+        self.application.add_handler(request_payment_handler)
         self.application.add_handler(assign_order_handler)
         self.application.add_handler(update_order_status_handler)
         self.application.add_handler(incorrect_order_handler)
@@ -333,8 +332,7 @@ class TrashBot:
         else:
             user_status = self.get_user_status(chat_id)[0]
             match user_status:
-                case (Status.STARTED | Status.READY |
-                      Status.WAITING_FOR_PAYMENT | Status.ORDER_PLACED):
+                case Status.READY:
                     sql = (f'UPDATE user_info '
                            f'SET status = {status} '
                            f'WHERE chat_id = {chat_id};')
@@ -556,6 +554,9 @@ class TrashBot:
                                             f'{order_info[10]}',
                                        parse_mode='HTML'
                                        )
+        await context.bot.forward_message(chat_id=OWNER_CHAT,
+                                          from_chat_id=update.message.chat_id,
+                                          message_id=update.message.message_id)
 
     async def assign_order(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
@@ -689,7 +690,7 @@ class TrashBot:
                   f'id={customer_id}')
 
     async def reject_order(self, update: Update,
-                              context: ContextTypes.DEFAULT_TYPE):
+                           context: ContextTypes.DEFAULT_TYPE):
         rematch = re.search(r'([0-9]+) reject', update.message.text)
         order_id = rematch.group(1)
         customer_id = self.get_customer_id(order_id)[0]
@@ -704,8 +705,6 @@ class TrashBot:
         except error.BadRequest:
             print(f'Cannot send reject order to customer, id={customer_id}')
         self.reject_order_db(order_id)
-
-
 
     # ----------------- Handler for custom input info--------------------------
 
@@ -992,7 +991,7 @@ class TrashBot:
                 )
             )
 
-    async def process_payment(self, update: Update,
+    async def request_payment(self, update: Update,
                               context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
@@ -1023,45 +1022,51 @@ class TrashBot:
                 'Для того, чтобы мы приняли ваш заказ, '
                 'переведите соответствующую сумму на\n'
                 f'`{OWNER_CARD}`\n'
+                f'({OWNER_NAME})\n'
                 f'с номером заказа `#{order_id}` в сообщении,\n'
-                'затем нажмите на кнопку "Оформить заказ"',
+                'а затем **отправьте сюда скриншот платежа**',
                 reply_markup=ReplyKeyboardMarkup(
-                    [['Оформить заказ']], one_time_keyboard=True
+                    [['Назад']], one_time_keyboard=True
                 )
             )
-            # после того как оплата пройдет, нужно вызвать place_order
-            self.insert_user_info(update.message.chat_id,
-                                  status=Status.ORDER_PLACED)
 
     async def place_order(self, update: Update,
                           context: ContextTypes.DEFAULT_TYPE):
         """Insert order into order_info table,
         send order to owner chat, show order details to user."""
 
-        self.insert_user_info(update.message.chat_id, status=Status.READY)
-        order_id = self.get_order_id(update.message.chat_id)[0]
-        order_info = self.get_order_info(order_id)
-        await self.send_order(update, context, order_info)
-        await update.message.reply_html(
-            f'<b>Детали заказа '
-            f'#{order_info[0]}:</b>\n\n'
-            f'{order_info[7]}\n'
-            '<b><i>Имя:</i></b>\n'
-            f'{order_info[3]}\n'
-            '<b><i>Адрес:</i></b>\n'
-            f'{order_info[4]}\n'
-            '<b><i>Номер телефона:</i></b>\n'
-            f'{order_info[5]}\n'
-            '<b><i>Комментарий:</i></b>\n'
-            f'{order_info[6]}\n'
-            '<b><i>Дата/время заказа:</i></b>\n'
-            f'{order_info[10]}\n\n'
-            'Заказ уже обрабатывается, '
-            'через несколько минут пришлем обновление статуса😉',
-            reply_markup=ReplyKeyboardMarkup(
-                [['Вынести мусор']], one_time_keyboard=True
+        cur_status = self.get_user_status(update.message.chat_id)
+        if cur_status is None or cur_status[0] != Status.WAITING_FOR_PAYMENT:
+            await update.message.reply_html(
+                'Произошла ошибка связи с сервером.\n'
+                'Пожалуйста, попробуйте еще раз.'
             )
-        )
+            await self.reset(update, context, cur_status is None)
+        else:
+            self.insert_user_info(update.message.chat_id, status=Status.READY)
+            order_id = self.get_order_id(update.message.chat_id)[0]
+            order_info = self.get_order_info(order_id)
+            await self.send_order(update, context, order_info)
+            await update.message.reply_html(
+                f'<b>Детали заказа '
+                f'#{order_info[0]}:</b>\n\n'
+                f'{order_info[7]}\n'
+                '<b><i>Имя:</i></b>\n'
+                f'{order_info[3]}\n'
+                '<b><i>Адрес:</i></b>\n'
+                f'{order_info[4]}\n'
+                '<b><i>Номер телефона:</i></b>\n'
+                f'{order_info[5]}\n'
+                '<b><i>Комментарий:</i></b>\n'
+                f'{order_info[6]}\n'
+                '<b><i>Дата/время заказа:</i></b>\n'
+                f'{order_info[10]}\n\n'
+                'Заказ уже обрабатывается, '
+                'через несколько минут пришлем обновление статуса😉',
+                reply_markup=ReplyKeyboardMarkup(
+                    [['Вынести мусор']], one_time_keyboard=True
+                )
+            )
 
     @staticmethod
     async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
