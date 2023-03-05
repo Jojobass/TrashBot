@@ -44,6 +44,7 @@ class OrderStatus:
     ACCEPTED = 'Курьер принял ваш заказ'
     EN_ROUTE = 'Курьер в пути'
     DONE = 'Заказ выполнен'
+    REJECTED = 'Отменен'
 
 
 class TrashBot:
@@ -117,7 +118,11 @@ class TrashBot:
                     'Поддержка']
 
     def build_app(self):
-        self.application = ApplicationBuilder().token(TOKEN).build()
+        self.application = (ApplicationBuilder()
+                            .token(TOKEN)
+                            .get_updates_http_version('1.1')
+                            .http_version('1.1')
+                            .build())
         start_handler = CommandHandler('start', self.start,
                                        filters=filters.ChatType.PRIVATE)
         show_support_handler = MessageHandler(
@@ -164,18 +169,29 @@ class TrashBot:
             self.process_payment)
 
         # pylint: disable=consider-using-f-string
-        delegate_order_handler = MessageHandler(
-            (filters.TEXT &
-             filters.Regex(re.compile('^{BOT_NAME} [0-9]+ @[A-Za-z0-9_]+'
+        assign_order_handler = MessageHandler(
+            (filters.Regex(re.compile('^{BOT_NAME} [0-9]+ @[A-Za-z0-9_]+'
                                       .format(BOT_NAME=BOT_NAME))) &
              filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
              filters.User(username=OWNER_USERNAME, allow_empty=True)),
-            self.delegate_order)
+            self.assign_order)
         update_order_status_handler = CallbackQueryHandler(
             self.update_order_status,
             pattern=f'[0-9]+ ({OrderStatus.EN_ROUTE})|'
                     f'[0-9]+ ({OrderStatus.DONE})'
         )
+        incorrect_order_handler = MessageHandler(
+            (filters.Regex(re.compile('^{BOT_NAME} [0-9]+ incorrect'
+                                      .format(BOT_NAME=BOT_NAME))) &
+             filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
+             filters.User(username=OWNER_USERNAME, allow_empty=True)),
+            self.incorrect_order)
+        reject_order_handler = MessageHandler(
+            (filters.Regex(re.compile('^{BOT_NAME} [0-9]+ reject'
+                                      .format(BOT_NAME=BOT_NAME))) &
+             filters.Chat(chat_id=OWNER_CHAT, allow_empty=True) &
+             filters.User(username=OWNER_USERNAME, allow_empty=True)),
+            self.reject_order)
 
         self.application.add_handler(show_support_handler)
         self.application.add_handler(start_handler)
@@ -188,8 +204,10 @@ class TrashBot:
         self.application.add_handler(edit_phone_handler)
         self.application.add_handler(select_service_handler)
         self.application.add_handler(process_payment_handler)
-        self.application.add_handler(delegate_order_handler)
+        self.application.add_handler(assign_order_handler)
         self.application.add_handler(update_order_status_handler)
+        self.application.add_handler(incorrect_order_handler)
+        self.application.add_handler(reject_order_handler)
 
         # Other handlers
         unknown_handler = MessageHandler(filters.ChatType.PRIVATE &
@@ -501,6 +519,18 @@ class TrashBot:
         self.conn.commit()
         cur.close()
 
+    def reject_order_db(self, order_id):
+        sql = ('UPDATE order_info '
+               f'SET status = "{OrderStatus.REJECTED}" '
+               f'WHERE id = {order_id};')
+        cur = self.conn.cursor()
+        try:
+            cur.execute(sql)
+        except sqlite3.ProgrammingError:
+            pass
+        self.conn.commit()
+        cur.close()
+
     # -------------------- Handlers for workers -------------------------------
 
     @staticmethod
@@ -527,15 +557,15 @@ class TrashBot:
                                        parse_mode='HTML'
                                        )
 
-    async def delegate_order(self, update: Update,
-                             context: ContextTypes.DEFAULT_TYPE):
+    async def assign_order(self, update: Update,
+                           context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         rematch = re.search(r'([0-9]+) (@[A-Za-z0-9_]+)', update.message.text)
         order_id = rematch.group(1)
         worker_username = rematch.group(2)
         if not self.check_order_pending(order_id):
             await update.message.reply_html(
-                f'Заказ <i>#{order_id}</i> не найден, '
+                f'Заказ <i>#{order_id}</i> не найден, отменен, выполнен, '
                 f'либо исполнитель уже был присвоен!'
             )
         else:
@@ -609,9 +639,7 @@ class TrashBot:
                                                     f'</b>',
                                                parse_mode='HTML')
             except error.BadRequest:
-                print(
-                    f'Error! '
-                    f'Cannot send status to customer, id={order_info[1]}')
+                print(f'Cannot send status to customer, id={order_info[1]}')
 
     async def update_order_status(self, update: Update,
                                   context: ContextTypes.DEFAULT_TYPE):
@@ -629,7 +657,7 @@ class TrashBot:
                                                 f'<b>{new_status}</b>',
                                            parse_mode='HTML')
         except error.BadRequest:
-            print(f'Error! Cannot send status to customer, id={customer_id}')
+            print(f'Cannot send status to customer, id={customer_id}')
         if new_status == OrderStatus.EN_ROUTE:
             inline_keyboard = InlineKeyboardMarkup(
                 [
@@ -643,6 +671,41 @@ class TrashBot:
             await query.edit_message_text(
                 text=query.message.text + '\n\n✅Выполнено'
             )
+
+    async def incorrect_order(self, update: Update,
+                              context: ContextTypes.DEFAULT_TYPE):
+        rematch = re.search(r'([0-9]+) incorrect', update.message.text)
+        order_id = rematch.group(1)
+        customer_id = self.get_customer_id(order_id)[0]
+        try:
+            await context.bot.send_message(chat_id=customer_id,
+                                           text='Возникли трудности '
+                                                'с обработкой заказа,\n'
+                                                'в ближайшее время с вами '
+                                                'свяжется наш сотрудник',
+                                           parse_mode='HTML')
+        except error.BadRequest:
+            print(f'Cannot send incorrect order to customer, '
+                  f'id={customer_id}')
+
+    async def reject_order(self, update: Update,
+                              context: ContextTypes.DEFAULT_TYPE):
+        rematch = re.search(r'([0-9]+) reject', update.message.text)
+        order_id = rematch.group(1)
+        customer_id = self.get_customer_id(order_id)[0]
+        try:
+            await context.bot.send_message(chat_id=customer_id,
+                                           text=f'Заказ <i>#{order_id}</i> '
+                                                'не был оплачен и '
+                                                '<b>не будет выполнен</b>.\n'
+                                                'Не согласны? '
+                                                'Пишите в поддержку',
+                                           parse_mode='HTML')
+        except error.BadRequest:
+            print(f'Cannot send reject order to customer, id={customer_id}')
+        self.reject_order_db(order_id)
+
+
 
     # ----------------- Handler for custom input info--------------------------
 
