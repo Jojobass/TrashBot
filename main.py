@@ -534,34 +534,96 @@ class TrashBot:
         self.conn.commit()
         cur.close()
 
-    # -------------------- Handlers for workers -------------------------------
+    # ----------------------- Messaging methods -------------------------------
+
+    async def send_message(self, update: Update,
+                           context: ContextTypes.DEFAULT_TYPE,
+                           chat_id, text, parse_mode=None, reply_markup=None,
+                           raise_=False):
+        try:
+            await context.bot.send_message(chat_id=chat_id,
+                                           text=text,
+                                           parse_mode=parse_mode,
+                                           reply_markup=reply_markup)
+        except error.TimedOut as e:
+            await self.reply_html(update, context,
+                                  'Истекло ожидание ответа от сервера Telegram.'
+                                  '\nПожалуйста, попробуйте еще раз')
+            if raise_:
+                raise e
+        except (error.BadRequest, error.Forbidden) as e:
+            if raise_:
+                raise e
 
     @staticmethod
-    async def send_order(update: Update,
+    async def reply_html(update: Update,
+                         context: ContextTypes.DEFAULT_TYPE,
+                         text, reply_markup=None, raise_=False):
+        # pylint: disable=unused-argument
+        try:
+            await update.message.reply_html(text, reply_markup=reply_markup)
+        except error.TelegramError as e:
+            if raise_:
+                raise e
+
+    @staticmethod
+    async def reply_markdown(update: Update,
+                             context: ContextTypes.DEFAULT_TYPE,
+                             text, reply_markup=None, raise_=False):
+        # pylint: disable=unused-argument
+        try:
+            await update.message.reply_markdown(text, reply_markup=reply_markup)
+        except error.TelegramError as e:
+            if raise_:
+                raise e
+
+    async def forward_message(self, update: Update,
+                              context: ContextTypes.DEFAULT_TYPE,
+                              chat_id, from_chat_id, message_id, raise_=False):
+        try:
+            await context.bot.forward_message(chat_id=chat_id,
+                                              from_chat_id=from_chat_id,
+                                              message_id=message_id)
+        except error.TimedOut as e:
+            await self.reply_html(update, context,
+                                  'Истекло ожидание ответа от сервера Telegram.'
+                                  '\nПожалуйста, попробуйте еще раз')
+            if raise_:
+                raise e
+        except (error.BadRequest, error.Forbidden) as e:
+            if raise_:
+                raise e
+
+    # -------------------- Handlers for workers -------------------------------
+
+    async def send_order(self, update: Update,
                          context: ContextTypes.DEFAULT_TYPE,
                          order_info):
         # pylint: disable=unused-argument
-        await context.bot.send_message(chat_id=OWNER_CHAT,
-                                       text=f'<b>Детали заказа '
-                                            f'#{order_info[0]}:</b>\n\n'
-                                            f'{order_info[7]}\n'
-                                            '<b><i>Контакт:</i></b>\n'
-                                            f'@{order_info[2]}\n'
-                                            '<b><i>Имя:</i></b>\n'
-                                            f'{order_info[3]}\n'
-                                            '<b><i>Адрес:</i></b>\n'
-                                            f'{order_info[4]}\n'
-                                            '<b><i>Номер телефона:</i></b>\n'
-                                            f'{order_info[5]}\n'
-                                            '<b><i>Комментарий:</i></b>\n'
-                                            f'{order_info[6]}\n'
-                                            '<b><i>Дата/время заказа:</i></b>\n'
-                                            f'{order_info[10]}',
-                                       parse_mode='HTML'
-                                       )
-        await context.bot.forward_message(chat_id=OWNER_CHAT,
-                                          from_chat_id=update.message.chat_id,
-                                          message_id=update.message.message_id)
+        await self.send_message(update, context,
+                                chat_id=OWNER_CHAT,
+                                text=f'<b>Детали заказа '
+                                     f'#{order_info[0]}:</b>\n\n'
+                                     f'{order_info[7]}\n'
+                                     '<b><i>Контакт:</i></b>\n'
+                                     f'@{order_info[2]}\n'
+                                     '<b><i>Имя:</i></b>\n'
+                                     f'{order_info[3]}\n'
+                                     '<b><i>Адрес:</i></b>\n'
+                                     f'{order_info[4]}\n'
+                                     '<b><i>Номер телефона:</i></b>\n'
+                                     f'{order_info[5]}\n'
+                                     '<b><i>Комментарий:</i></b>\n'
+                                     f'{order_info[6]}\n'
+                                     '<b><i>Дата/время заказа:</i></b>\n'
+                                     f'{order_info[10]}',
+                                parse_mode='HTML',
+                                raise_=True)
+        await self.forward_message(update, context,
+                                   chat_id=OWNER_CHAT,
+                                   from_chat_id=update.message.chat_id,
+                                   message_id=update.message.message_id,
+                                   raise_=True)
 
     async def assign_order(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
@@ -570,7 +632,8 @@ class TrashBot:
         order_id = rematch.group(1)
         worker_username = rematch.group(2)
         if not self.check_order_pending(order_id):
-            await update.message.reply_html(
+            await self.reply_html(
+                update, context,
                 f'Заказ <i>#{order_id}</i> не найден, отменен, выполнен, '
                 f'либо исполнитель уже был присвоен!'
             )
@@ -578,12 +641,13 @@ class TrashBot:
             try:
                 await self.send_order_to_worker(update, context, order_id,
                                                 worker_username)
-            except error.BadRequest:
-                pass
+            except error.TelegramError:
+                return
             else:
-                await update.message.reply_html(
-                    f'Для заказа <i>#{order_id}</i> '
-                    f'присвоен исполнитель: {worker_username}',
+                await self.reply_html(
+                    update, context,
+                    f'Для заказа <i>#{order_id}</i> присвоен исполнитель: '
+                    f'{worker_username}',
                 )
 
     async def send_order_to_worker(self, update: Update,
@@ -592,10 +656,11 @@ class TrashBot:
         order_info = self.get_order_info(order_id)
         worker_id = self.get_user_by_username(worker_username)
         if worker_id is None:
-            await update.message.reply_html(
+            await self.reply_html(
+                update, context,
                 f'Исполнитель {worker_username} не начал беседу с ботом!'
             )
-            return
+            raise error.BadRequest
         inline_keyboard = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton('Уже в пути',
@@ -604,30 +669,33 @@ class TrashBot:
             ]
         )
         try:
-            await context.bot.send_message(chat_id=worker_id[0],
-                                           text=f'<b>Детали заказа '
-                                                f'#{order_info[0]}:</b>\n\n'
-                                                f'{order_info[7]}\n'
-                                                '<b><i>Контакт:</i></b>\n'
-                                                f'@{order_info[2]}\n'
-                                                '<b><i>Имя:</i></b>\n'
-                                                f'{order_info[3]}\n'
-                                                '<b><i>Адрес:</i></b>\n'
-                                                f'{order_info[4]}\n'
-                                                '<b><i>Номер телефона:'
-                                                '</i></b>\n'
-                                                f'{order_info[5]}\n'
-                                                '<b><i>Комментарий:</i></b>\n'
-                                                f'{order_info[6]}\n'
-                                                '<b><i>'
-                                                'Дата/время заказа:'
-                                                '</i></b>\n'
-                                                f'{order_info[10]}',
-                                           parse_mode='HTML',
-                                           reply_markup=inline_keyboard
-                                           )
-        except error.BadRequest as e:
-            await update.message.reply_html(
+            await self.send_message(update, context,
+                                    chat_id=worker_id[0],
+                                    text=f'<b>Детали заказа '
+                                         f'#{order_info[0]}:</b>\n\n'
+                                         f'{order_info[7]}\n'
+                                         '<b><i>Контакт:</i></b>\n'
+                                         f'@{order_info[2]}\n'
+                                         '<b><i>Имя:</i></b>\n'
+                                         f'{order_info[3]}\n'
+                                         '<b><i>Адрес:</i></b>\n'
+                                         f'{order_info[4]}\n'
+                                         '<b><i>Номер телефона:'
+                                         '</i></b>\n'
+                                         f'{order_info[5]}\n'
+                                         '<b><i>Комментарий:</i></b>\n'
+                                         f'{order_info[6]}\n'
+                                         '<b><i>'
+                                         'Дата/время заказа:'
+                                         '</i></b>\n'
+                                         f'{order_info[10]}',
+                                    parse_mode='HTML',
+                                    reply_markup=inline_keyboard,
+                                    raise_=True
+                                    )
+        except (error.BadRequest, error.Forbidden) as e:
+            await self.reply_html(
+                update, context,
                 f'Ошибка! Возможно, исполнитель {worker_username}'
                 f' не начал беседу с ботом!'
             )
@@ -636,16 +704,14 @@ class TrashBot:
             self.insert_order_info(order_id,
                                    status=OrderStatus.ACCEPTED,
                                    worker_username=worker_username)
-            try:
-                await context.bot.send_message(chat_id=order_info[1],
-                                               text=f'Статус заказа '
-                                                    f'<i>#{order_id}</i>:\n'
-                                                    f'<b>'
-                                                    f'{OrderStatus.ACCEPTED}'
-                                                    f'</b>',
-                                               parse_mode='HTML')
-            except error.BadRequest:
-                print(f'Cannot send status to customer, id={order_info[1]}')
+            await self.send_message(update, context,
+                                    chat_id=order_info[1],
+                                    text=f'Статус заказа '
+                                         f'<i>#{order_id}</i>:\n'
+                                         f'<b>'
+                                         f'{OrderStatus.ACCEPTED}'
+                                         f'</b>',
+                                    parse_mode='HTML')
 
     async def update_order_status(self, update: Update,
                                   context: ContextTypes.DEFAULT_TYPE):
@@ -656,14 +722,13 @@ class TrashBot:
         new_status = rematch.group(2)
         self.insert_order_info(order_id, status=new_status)
         customer_id = self.get_customer_id(order_id)[0]
-        try:
-            await context.bot.send_message(chat_id=customer_id,
-                                           text=f'Статус заказа '
-                                                f'<i>#{order_id}</i>:\n'
-                                                f'<b>{new_status}</b>',
-                                           parse_mode='HTML')
-        except error.BadRequest:
-            print(f'Cannot send status to customer, id={customer_id}')
+        await self.send_message(update, context,
+                                chat_id=customer_id,
+                                text=f'Статус заказа '
+                                     f'<i>#{order_id}</i>:\n'
+                                     f'<b>{new_status}</b>',
+                                parse_mode='HTML')
+
         if new_status == OrderStatus.EN_ROUTE:
             inline_keyboard = InlineKeyboardMarkup(
                 [
@@ -683,32 +748,29 @@ class TrashBot:
         rematch = re.search(r'([0-9]+) incorrect', update.message.text)
         order_id = rematch.group(1)
         customer_id = self.get_customer_id(order_id)[0]
-        try:
-            await context.bot.send_message(chat_id=customer_id,
-                                           text='Возникли трудности '
-                                                'с обработкой заказа,\n'
-                                                'в ближайшее время с вами '
-                                                'свяжется наш сотрудник',
-                                           parse_mode='HTML')
-        except error.BadRequest:
-            print(f'Cannot send incorrect order to customer, '
-                  f'id={customer_id}')
+
+        await self.send_message(update, context,
+                                chat_id=customer_id,
+                                text='Возникли трудности '
+                                     'с обработкой заказа,\n'
+                                     'в ближайшее время с вами '
+                                     'свяжется наш сотрудник',
+                                parse_mode='HTML')
 
     async def reject_order(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         rematch = re.search(r'([0-9]+) reject', update.message.text)
         order_id = rematch.group(1)
         customer_id = self.get_customer_id(order_id)[0]
-        try:
-            await context.bot.send_message(chat_id=customer_id,
-                                           text=f'Заказ <i>#{order_id}</i> '
-                                                'не был оплачен и '
-                                                '<b>не будет выполнен</b>.\n'
-                                                'Не согласны? '
-                                                'Пишите в поддержку',
-                                           parse_mode='HTML')
-        except error.BadRequest:
-            print(f'Cannot send reject order to customer, id={customer_id}')
+
+        await self.send_message(update, context,
+                                chat_id=customer_id,
+                                text=f'Заказ <i>#{order_id}</i> '
+                                     'не был оплачен и '
+                                     '<b>не будет выполнен</b>.\n'
+                                     'Не согласны? '
+                                     'Пишите в поддержку',
+                                parse_mode='HTML')
         self.reject_order_db(order_id)
 
     # ----------------- Handler for custom input info--------------------------
@@ -722,10 +784,10 @@ class TrashBot:
         """
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             user_status = cur_status[0]
@@ -736,54 +798,115 @@ class TrashBot:
                         status=Status.WAITING_FOR_ADDRESS_HOUSE,
                         name=update.message.text
                     )
-                    await update.message.reply_html(
-                        '<b>Введите номер дома:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер дома:</b>',
+                                              reply_markup=ReplyKeyboardMarkup(
+                                                  HOUSE_BUTTONS,
+                                                  one_time_keyboard=True),
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.WAITING_FOR_ADDRESS_HOUSE:
                     self.insert_user_info(
                         update.message.chat_id,
                         status=Status.WAITING_FOR_ADDRESS_ENTRANCE,
                         house=update.message.text
                     )
-                    await update.message.reply_html(
-                        '<b>Введите номер подъезда:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер подъезда:</b>',
+                                              reply_markup=ReplyKeyboardMarkup(
+                                                  ENTRANCE_BUTTONS,
+                                                  one_time_keyboard=True),
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.WAITING_FOR_ADDRESS_ENTRANCE:
                     self.insert_user_info(
                         update.message.chat_id,
                         status=Status.WAITING_FOR_ADDRESS_FLOOR,
                         entrance=update.message.text
                     )
-                    await update.message.reply_html(
-                        '<b>Введите номер этажа:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер этажа:</b>',
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.WAITING_FOR_ADDRESS_FLOOR:
                     self.insert_user_info(
                         update.message.chat_id,
                         status=Status.WAITING_FOR_ADDRESS_FLAT,
                         floor=update.message.text
                     )
-                    await update.message.reply_html(
-                        '<b>Введите номер квартиры:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер квартиры:</b>',
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.WAITING_FOR_ADDRESS_FLAT:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.WAITING_FOR_PHONE,
                                           flat=update.message.text)
-                    await update.message.reply_html(
-                        '<b>Введите номер телефона:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер телефона:</b>',
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.WAITING_FOR_PHONE:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.READY,
                                           phone=update.message.text)
-                    await update.message.reply_html(
-                        '<b>Хотите добавить комментарий?</b>',
-                        reply_markup=ReplyKeyboardMarkup(
-                            [['Добавить комментарий', 'Детали заказа']],
-                            one_time_keyboard=True
+                    try:
+                        await self.reply_html(
+                            update, context,
+                            '<b>Хотите добавить комментарий?</b>',
+                            reply_markup=ReplyKeyboardMarkup(
+                                [['Добавить комментарий', 'Детали заказа']],
+                                one_time_keyboard=True
+                            ),
+                            raise_=True
                         )
-                    )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.EDIT_COMMENT:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.READY,
@@ -798,23 +921,53 @@ class TrashBot:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.EDIT_ADDRESS_ENTRANCE,
                                           house=update.message.text)
-                    await update.message.reply_html(
-                        '<b>Введите номер подъезда:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер подъезда:</b>',
+                                              reply_markup=ReplyKeyboardMarkup(
+                                                  ENTRANCE_BUTTONS,
+                                                  one_time_keyboard=True),
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.EDIT_ADDRESS_ENTRANCE:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.EDIT_ADDRESS_FLOOR,
                                           entrance=update.message.text)
-                    await update.message.reply_html(
-                        '<b>Введите номер этажа:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер этажа:</b>',
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.EDIT_ADDRESS_FLOOR:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.EDIT_ADDRESS_FLAT,
                                           floor=update.message.text)
-                    await update.message.reply_html(
-                        '<b>Введите номер квартиры:</b>'
-                    )
+                    try:
+                        await self.reply_html(update, context,
+                                              '<b>Введите номер квартиры:</b>',
+                                              raise_=True
+                                              )
+                    except error.TelegramError:
+                        await self.reply_html(update, context,
+                                              'Произошла ошибка '
+                                              'связи с сервером.\n'
+                                              'Пожалуйста, попробуйте еще раз.'
+                                              )
+                        await self.reset(update, context)
                 case Status.EDIT_ADDRESS_FLAT:
                     self.insert_user_info(update.message.chat_id,
                                           status=Status.READY,
@@ -837,14 +990,23 @@ class TrashBot:
 
         reply_keyboard = [['Вынести мусор']]
 
-        await update.message.reply_html(
-            'Привет!👋\n'
-            'Я - бот, который поможет тебе вынести 🗑!\n'
-            'Нажми на кнопку [Вынести мусор]',
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard, one_time_keyboard=True
-            )
-        )
+        try:
+            await self.reply_html(update, context,
+                                  'Привет!👋\n'
+                                  'Я - бот, который поможет тебе вынести 🗑!\n'
+                                  'Нажми на кнопку [Вынести мусор]',
+                                  reply_markup=ReplyKeyboardMarkup(
+                                      reply_keyboard, one_time_keyboard=True
+                                  ),
+                                  raise_=True
+                                  )
+        except error.TelegramError:
+            await self.reply_html(update, context,
+                                  'Произошла ошибка '
+                                  'связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
+            await self.reset(update, context)
 
     async def check_details(self, update: Update,
                             context: ContextTypes.DEFAULT_TYPE):
@@ -864,36 +1026,66 @@ class TrashBot:
             if not user_filled:
                 self.insert_user_info(update.message.chat_id,
                                       status=Status.WAITING_FOR_NAME)
-                await update.message.reply_html(
-                    '<b>Введите Имя:</b>'
-                )
+                try:
+                    await self.reply_html(update, context,
+                                          '<b>Введите Имя:</b>',
+                                          raise_=True
+                                          )
+                except error.TelegramError:
+                    await self.reply_html(update, context,
+                                          'Произошла ошибка '
+                                          'связи с сервером.\n'
+                                          'Пожалуйста, попробуйте еще раз.'
+                                          )
+                    await self.reset(update, context)
             else:
-                await update.message.reply_html(
-                    '<b>Сохраненные данные:</b>\n\n'
-                    '<b><i>Имя:</i></b>\n'
-                    f'{user_info[0]}\n'
-                    '<b><i>Адрес:</i></b>\n'
-                    f'д. {user_info[1]}, под. {user_info[2]}, '
-                    f'эт. {user_info[3]}, кв. {user_info[4]}\n'
-                    '<b><i>Номер телефона:</i></b>\n'
-                    f'{user_info[5]}\n'
-                    '<b><i>Комментарий:</i></b>\n'
-                    f'{user_info[6]}',
-                    reply_markup=ReplyKeyboardMarkup(
-                        [['Редактировать имя', 'Редактировать адрес'],
-                         ['Редактировать номер', 'Редактировать комментарий'],
-                         ['Выбрать услугу'],
-                         ['Поддержка']]
-                    )
-                )
+                try:
+                    await self.reply_html(update, context,
+                                          '<b>Сохраненные данные:</b>\n\n'
+                                          '<b><i>Имя:</i></b>\n'
+                                          f'{user_info[0]}\n'
+                                          '<b><i>Адрес:</i></b>\n'
+                                          f'д. {user_info[1]}, '
+                                          f'под. {user_info[2]}, '
+                                          f'эт. {user_info[3]}, '
+                                          f'кв. {user_info[4]}\n'
+                                          '<b><i>Номер телефона:</i></b>\n'
+                                          f'{user_info[5]}\n'
+                                          '<b><i>Комментарий:</i></b>\n'
+                                          f'{user_info[6]}',
+                                          reply_markup=ReplyKeyboardMarkup(
+                                              [['Редактировать имя',
+                                                'Редактировать адрес'],
+                                               ['Редактировать номер',
+                                                'Редактировать комментарий'],
+                                               ['Выбрать услугу'],
+                                               ['Поддержка']]
+                                          ),
+                                          raise_=True
+                                          )
+                except error.TelegramError:
+                    await self.reply_html(update, context,
+                                          'Произошла ошибка '
+                                          'связи с сервером.\n'
+                                          'Пожалуйста, попробуйте еще раз.'
+                                          )
+                    await self.reset(update, context)
 
-    @staticmethod
-    async def show_support(update: Update,
+    async def show_support(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
-        await update.message.reply_html(
-            f'По всем вопросам пишите {OWNER_USERNAME}'
-        )
+        try:
+            await self.reply_html(update, context,
+                                  f'По всем вопросам пишите {OWNER_USERNAME}',
+                                  raise_=True
+                                  )
+        except error.TelegramError:
+            await self.reply_html(update, context,
+                                  'Произошла ошибка '
+                                  'связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
+            await self.reset(update, context)
 
     async def reset(self, update: Update,
                     context: ContextTypes.DEFAULT_TYPE, no_info=False):
@@ -910,101 +1102,149 @@ class TrashBot:
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.READY:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.EDIT_COMMENT)
-            await update.message.reply_html(
-                '<b>Введите комментарий:</b>'
-            )
+            try:
+                await self.reply_html(update, context,
+                                      '<b>Введите комментарий:</b>',
+                                      raise_=True
+                                      )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                await self.reset(update, context)
 
     async def edit_name(self, update: Update,
                         context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.READY:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.EDIT_NAME)
-            await update.message.reply_html(
-                '<b>Введите Имя:</b>'
-            )
+            try:
+                await self.reply_html(update, context,
+                                      '<b>Введите Имя:</b>',
+                                      raise_=True
+                                      )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                await self.reset(update, context)
 
     async def edit_address(self, update: Update,
                            context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.READY:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.EDIT_ADDRESS_HOUSE)
-            await update.message.reply_html(
-                '<b>Введите номер дома:</b>'
-            )
+            try:
+                await self.reply_html(update, context,
+                                      '<b>Введите номер дома:</b>',
+                                      reply_markup=ReplyKeyboardMarkup(
+                                          HOUSE_BUTTONS,
+                                          one_time_keyboard=True),
+                                      raise_=True
+                                      )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                await self.reset(update, context)
 
     async def edit_phone(self, update: Update,
                          context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.READY:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.EDIT_PHONE)
-            await update.message.reply_html(
-                '<b>Введите номер телефона:</b>'
-            )
+            try:
+                await self.reply_html(update, context,
+                                      '<b>Введите номер телефона:</b>',
+                                      raise_=True
+                                      )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                await self.reset(update, context)
 
     async def select_service(self, update: Update,
                              context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.READY:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
                                   status=Status.SELECT_SERVICE)
-            await update.message.reply_html(
-                '<b>Выберите услугу:</b>',
-                reply_markup=ReplyKeyboardMarkup(
-                    [['1 Пакет +1 бутылка [100₽]'],
-                     ['2 Пакета +2 бутылки [150₽]'],
-                     ['3-5 пакетов +3 бутылки [225₽]'],
-                     ['Назад']], one_time_keyboard=True
-                )
-            )
+            try:
+                await self.reply_html(update, context,
+                                      '<b>Выберите услугу:</b>',
+                                      reply_markup=ReplyKeyboardMarkup(
+                                          [['1 Пакет +1 бутылка [100₽]'],
+                                           ['2 Пакета +2 бутылки [150₽]'],
+                                           ['3-5 пакетов +3 бутылки [225₽]'],
+                                           ['Назад']], one_time_keyboard=True
+                                      ),
+                                      raise_=True
+                                      )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                await self.reset(update, context)
 
     async def request_payment(self, update: Update,
                               context: ContextTypes.DEFAULT_TYPE):
         # pylint: disable=unused-argument
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.SELECT_SERVICE:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id,
@@ -1023,17 +1263,29 @@ class TrashBot:
                                    comment=user_info[6],
                                    service=user_info[7])
             order_id = self.get_order_id(update.message.chat_id)[0]
-            await update.message.reply_markdown(
-                'Для того, чтобы мы приняли ваш заказ, '
-                'переведите соответствующую сумму на\n'
-                f'`{OWNER_CARD}`\n'
-                f'({OWNER_NAME})\n'
-                f'с номером заказа `#{order_id}` в сообщении,\n'
-                'а затем **отправьте сюда скриншот платежа**',
-                reply_markup=ReplyKeyboardMarkup(
-                    [['Назад']], one_time_keyboard=True
+            try:
+                await self.reply_markdown(
+                    update, context,
+                    'Для того, чтобы мы приняли ваш заказ, '
+                    'переведите соответствующую сумму на\n'
+                    f'`{OWNER_CARD}`\n'
+                    f'({OWNER_NAME})\n'
+                    f'с номером заказа `#{order_id}` в сообщении,\n'
+                    'а затем **отправьте сюда скриншот платежа**',
+                    reply_markup=ReplyKeyboardMarkup(
+                        [['Назад']],
+                        one_time_keyboard=True
+                    ),
+                    raise_=True
                 )
-            )
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка '
+                                      'связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+                self.reject_order_db(order_id)
+                await self.reset(update, context)
 
     async def place_order(self, update: Update,
                           context: ContextTypes.DEFAULT_TYPE):
@@ -1042,41 +1294,50 @@ class TrashBot:
 
         cur_status = self.get_user_status(update.message.chat_id)
         if cur_status is None or cur_status[0] != Status.WAITING_FOR_PAYMENT:
-            await update.message.reply_html(
-                'Произошла ошибка связи с сервером.\n'
-                'Пожалуйста, попробуйте еще раз.'
-            )
+            await self.reply_html(update, context,
+                                  'Произошла ошибка связи с сервером.\n'
+                                  'Пожалуйста, попробуйте еще раз.'
+                                  )
             await self.reset(update, context, cur_status is None)
         else:
             self.insert_user_info(update.message.chat_id, status=Status.READY)
             order_id = self.get_order_id(update.message.chat_id)[0]
             order_info = self.get_order_info(order_id)
-            await self.send_order(update, context, order_info)
-            await update.message.reply_html(
-                f'<b>Детали заказа '
-                f'#{order_info[0]}:</b>\n\n'
-                f'{order_info[7]}\n'
-                '<b><i>Имя:</i></b>\n'
-                f'{order_info[3]}\n'
-                '<b><i>Адрес:</i></b>\n'
-                f'{order_info[4]}\n'
-                '<b><i>Номер телефона:</i></b>\n'
-                f'{order_info[5]}\n'
-                '<b><i>Комментарий:</i></b>\n'
-                f'{order_info[6]}\n'
-                '<b><i>Дата/время заказа:</i></b>\n'
-                f'{order_info[10]}\n\n'
-                'Заказ уже обрабатывается, '
-                'через несколько минут пришлем обновление статуса😉',
-                reply_markup=ReplyKeyboardMarkup(
-                    [['Вынести мусор']], one_time_keyboard=True
+            try:
+                await self.send_order(update, context, order_info)
+            except error.TelegramError:
+                await self.reply_html(update, context,
+                                      'Произошла ошибка связи с сервером.\n'
+                                      'Пожалуйста, попробуйте еще раз.'
+                                      )
+            else:
+                await self.reply_html(
+                    update, context,
+                    f'<b>Детали заказа '
+                    f'#{order_info[0]}:</b>\n\n'
+                    f'{order_info[7]}\n'
+                    '<b><i>Имя:</i></b>\n'
+                    f'{order_info[3]}\n'
+                    '<b><i>Адрес:</i></b>\n'
+                    f'{order_info[4]}\n'
+                    '<b><i>Номер телефона:</i></b>\n'
+                    f'{order_info[5]}\n'
+                    '<b><i>Комментарий:</i></b>\n'
+                    f'{order_info[6]}\n'
+                    '<b><i>Дата/время заказа:</i></b>\n'
+                    f'{order_info[10]}\n\n'
+                    'Заказ уже обрабатывается, '
+                    'через несколько минут пришлем обновление статуса😉',
+                    reply_markup=ReplyKeyboardMarkup(
+                        [['Вынести мусор']],
+                        one_time_keyboard=True
+                    )
                 )
-            )
 
-    @staticmethod
-    async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await context.bot.send_message(chat_id=update.effective_chat.id,
-                                       text='Сорри, я не знаю таких команд.')
+    async def unknown(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_message(update, context,
+                                chat_id=update.effective_chat.id,
+                                text='Сорри, я не знаю таких команд.')
 
 
 if __name__ == '__main__':
