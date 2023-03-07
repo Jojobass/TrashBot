@@ -25,6 +25,10 @@ OWNER_CARD = '#### #### #### ####'
 OWNER_NAME = 'Иванов Иван Иванович'
 BOT_NAME = '@Malakhov_BKIT_bot'
 
+HOUSE_BUTTONS = [['2', '20А']]
+ENTRANCE_BUTTONS = [['А', 'Б', 'В', 'Г'],
+                    ['Д', 'Е', 'Ж', 'И']]
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -164,7 +168,8 @@ class TrashBot:
                           '3-5 пакетов +3 бутылки [225₽]']),
             self.request_payment)
         place_order_handler = MessageHandler(
-            filters.ChatType.PRIVATE & filters.PHOTO,
+            filters.ChatType.PRIVATE &
+            (filters.PHOTO | filters.Document.IMAGE | filters.Document.PDF),
             self.place_order)
 
         # pylint: disable=consider-using-f-string
